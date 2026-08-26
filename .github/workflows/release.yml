@@ -55,10 +55,13 @@ jobs:
         shell: pwsh
         run: |
           $exe = Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe | Select-Object -First 1
-          $list = & 7z l $exe.FullName
+          # -join is load-bearing: 7z returns an ARRAY of lines, and PowerShell's
+          # -notlike/-notmatch on an array returns the filtered array rather than
+          # a boolean, so the test would pass or fail almost at random.
+          $list = (& 7z l $exe.FullName) -join "`n"
           foreach ($t in @("plink.exe","pageant.exe")) {
-            if ($list -notmatch [regex]::Escape($t)) {
-              $list | Out-String | Write-Host
+            if ($list -notlike "*$t*") {
+              Write-Host $list
               throw "$t is NOT bundled in the installer"
             }
             Write-Host "bundled: $t"
