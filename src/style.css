@@ -1,0 +1,52 @@
+:root{
+  --bg:#0d1016; --card:#151a23; --line:#232b38; --fg:#e6edf7; --dim:#8b97ab;
+  --accent:#10b981; --accent2:#22d3ee; --bad:#f43f5e; --warn:#f59e0b;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font:14px/1.5 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  display:flex; flex-direction:column; height:100vh; overflow:hidden;
+  -webkit-user-select:none; user-select:none;
+}
+header{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 12px}
+.brand{display:flex;gap:11px;align-items:center}
+.mark{width:36px;height:36px}
+h1{font-size:16px;margin:0;letter-spacing:-.01em}
+.sub{margin:0;color:var(--dim);font-size:11.5px}
+.pill{font-size:11px;font-weight:600;padding:4px 11px;border-radius:999px;border:1px solid var(--line)}
+.pill.stopped{color:var(--dim)}
+.pill.starting,.pill.reconnecting{color:var(--warn);border-color:#3a2f14;background:#1c1710}
+.pill.connected{color:var(--accent);border-color:#12402f;background:#0e2119}
+.pill.error{color:var(--bad);border-color:#3d1622;background:#1e1014}
+main{flex:1;overflow-y:auto;padding:0 18px 8px;display:flex;flex-direction:column;gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+.card.muted{background:transparent}
+h2{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);margin:0 0 10px}
+label{display:block;font-size:11.5px;color:var(--dim);margin-bottom:10px}
+label:last-child{margin-bottom:0}
+input[type=text],input:not([type]),input[type=number]{
+  width:100%;margin-top:5px;background:#0f1420;border:1px solid var(--line);
+  border-radius:8px;padding:9px 11px;color:var(--fg);font-size:13px;
+  font-family:inherit;-webkit-user-select:text;user-select:text;
+}
+input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(16,185,129,.13)}
+.row{display:flex;gap:10px}
+.grow{flex:1}
+.narrow{width:110px;flex:none}
+.check{display:flex;align-items:flex-start;gap:9px;color:var(--fg);font-size:13px;margin-bottom:9px}
+.check input{margin-top:2px;accent-color:var(--accent)}
+.check em{color:var(--dim);font-style:normal;font-size:11.5px}
+.hint,.path{color:var(--dim);font-size:11.5px;margin:8px 0 0}
+.path{word-break:break-all;font-family:ui-monospace,Consolas,monospace;font-size:11px}
+code{background:#0f1420;border:1px solid var(--line);border-radius:5px;padding:1px 5px;font-size:11.5px}
+.msg{min-height:17px;font-size:12px;margin:0;color:var(--warn)}
+.msg.err{color:var(--bad)} .msg.ok{color:var(--accent)}
+footer{display:flex;gap:10px;padding:12px 18px 16px;border-top:1px solid var(--line)}
+button{
+  flex:1;padding:11px;border-radius:9px;border:1px solid var(--line);
+  background:#1a212c;color:var(--fg);font:600 13px inherit;cursor:pointer;
+}
+button:hover{border-color:#334054}
+button.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#04120d}
+button.primary.on{background:#1a212c;color:var(--fg);border:1px solid var(--line)}

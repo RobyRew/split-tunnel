@@ -1,0 +1,16 @@
+# Rust / Tauri
+src-tauri/target/
+dist/
+
+# Bundled third-party binaries are fetched + checksum-verified by CI,
+# never committed.
+src-tauri/bin/
+
+# Never commit key material or a filled-in config.
+*.ppk
+*.pem
+id_*
+config.json
+
+.DS_Store
+Thumbs.db
