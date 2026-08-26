@@ -48,6 +48,22 @@ jobs:
       - name: Build installer
         run: cargo tauri build
 
+      # The app is useless without plink, and a silently-missing resource would
+      # only show up as "cannot start plink" on a user's machine. Assert the
+      # tools are actually inside the installer before we ship it.
+      - name: Verify bundled tools made it into the installer
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe | Select-Object -First 1
+          $list = & 7z l $exe.FullName
+          foreach ($t in @("plink.exe","pageant.exe")) {
+            if ($list -notmatch [regex]::Escape($t)) {
+              $list | Out-String | Write-Host
+              throw "$t is NOT bundled in the installer"
+            }
+            Write-Host "bundled: $t"
+          }
+
       - name: Collect installer
         shell: pwsh
         run: |

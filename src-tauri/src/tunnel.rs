@@ -88,10 +88,6 @@ impl Supervisor {
         self.status.lock().map(|s| s.clone()).unwrap_or(Status::Stopped)
     }
 
-    pub fn is_running(&self) -> bool {
-        self.running.load(Ordering::SeqCst)
-    }
-
     pub fn start(&self, plink: PathBuf, cfg: Config) {
         if self.running.swap(true, Ordering::SeqCst) {
             return; // already supervising
