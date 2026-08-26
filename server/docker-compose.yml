@@ -37,6 +37,10 @@ services:
 
     volumes:
       - ./config:/config
+      # Dedicated resolver: dnsmasq adds every address it resolves for Spotify
+      # (and all subdomains) straight into the egress allowlist. Only relevant
+      # when that allowlist is enabled — harmless otherwise.
+      - ./dns/resolv.conf:/etc/resolv.conf:ro
       - ./pubkeys:/pubkeys:ro
       # Forces AllowTcpForwarding on. The image ships it OFF, which silently
       # breaks the only thing this container does. See the script for detail.

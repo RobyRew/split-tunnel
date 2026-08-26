@@ -89,10 +89,42 @@ How it works, and why it is built this way:
 - **`ESTABLISHED` is allowed first**, or the rules would sever the tunnel's own
   SSH session to the client.
 
-> ⚠️ **A strict allowlist needs maintenance.** Spotify's audio is served from
-> CDNs shared with half the internet, and the hostnames vary by region. Expect
-> to add entries. Rejections are logged, rate-limited, so you can see exactly
-> what to add:
+### How the allowlist keeps up with Spotify's CDNs
+
+A fixed list of IPs — or even of hostnames — cannot work here. Audio and artwork
+come from `*.scdn.co`, `*.spotifycdn.com` and Akamai/Fastly hostnames that
+rotate constantly and differ by region. Any static list leaves gaps, and a gap
+means music that stops playing.
+
+So the allowlist populates **itself**. A dedicated `dnsmasq` resolves for the
+container only, and every address it returns for a Spotify domain **and all its
+subdomains** is written straight into the ipset at lookup time:
+
+```
+ipset=/spotify.com/scdn.co/pscdn.co/spotifycdn.com/.../splittunnel-allow4,splittunnel-allow6
+```
+
+Install it alongside the allowlist:
+
+```bash
+sudo apt install -y dnsmasq
+sudo cp dns/split-tunnel-dns.conf /etc/dnsmasq.d/
+sudo install -d /etc/systemd/system/dnsmasq.service.d
+sudo cp dns/dnsmasq-ipsets.conf /etc/systemd/system/dnsmasq.service.d/
+sudo systemctl daemon-reload && sudo systemctl restart dnsmasq
+```
+
+Two details that will bite you otherwise:
+
+- It listens on **127.0.0.1:53**, not a high port — `resolv.conf` has no syntax
+  for a port. That address is free because systemd-resolved binds `127.0.0.53`
+  and `127.0.0.54`, so nothing conflicts.
+- ipsets live in the kernel and **vanish on reboot**, and dnsmasq refuses to
+  start when a set named in `ipset=` is missing. The systemd drop-in creates
+  them in `ExecStartPre`, so the resolver survives a restart.
+
+> ⚠️ **Still worth watching.** If something breaks, rejections are logged
+> rate-limited, so you can see exactly what to add:
 >
 > ```bash
 > sudo journalctl -k -g SPLITTUNNEL-DROP --since -10min
