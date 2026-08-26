@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh the SplitTunnel egress allowlist
+
+# CDN addresses rotate constantly, so the allowlist is re-resolved rather than
+# pinned. Five minutes keeps up without hammering DNS.
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

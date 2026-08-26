@@ -1,0 +1,55 @@
+# SplitTunnel — server side.
+#
+# A shell-less SSH endpoint whose only job is `ssh -D` dynamic forwarding.
+# Containerised for isolation: if a key leaks, the holder gets a TCP relay,
+# NOT an account on your host.
+#
+#   1. Drop each user's PUBLIC key into ./pubkeys/<name>.pub  (one file each)
+#   2. docker compose up -d
+#   3. Open TCP 2223 in your firewall  (and your provider's, see README)
+
+services:
+  tunnel:
+    image: lscr.io/linuxserver/openssh-server:latest
+    container_name: split-tunnel
+    restart: unless-stopped
+
+    # Host networking is deliberate. A published Docker port sits behind
+    # ufw-docker's DOCKER-USER default-deny, whitelisted against a container IP
+    # that CHANGES when the container is recreated — when it drifts, the port is
+    # silently blackholed. Host networking makes this a plain firewall rule.
+    network_mode: "host"
+
+    environment:
+      # A dedicated high UID, not 1000. 1000 is usually your own login user, and
+      # the optional egress allowlist filters by UID — sharing it would police
+      # your own traffic too.
+      PUID: "8022"
+      PGID: "8022"
+      TZ: "Etc/UTC"
+      USER_NAME: "tunnel"
+      PASSWORD_ACCESS: "false"
+      SUDO_ACCESS: "false"
+      LISTEN_PORT: "2223"
+      # Every *.pub in ./pubkeys is authorised. Revoke someone by deleting
+      # their file and restarting — the others are unaffected.
+      PUBLIC_KEY_DIR: "/pubkeys"
+
+    volumes:
+      - ./config:/config
+      - ./pubkeys:/pubkeys:ro
+      # Forces AllowTcpForwarding on. The image ships it OFF, which silently
+      # breaks the only thing this container does. See the script for detail.
+      - ./custom-cont-init.d:/custom-cont-init.d:ro
+
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 2223 || exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 64m
+    cpus: 0.25

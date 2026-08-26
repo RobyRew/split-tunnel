@@ -1,0 +1,11 @@
+[Unit]
+Description=SplitTunnel egress allowlist (refresh resolved CDN addresses)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/split-tunnel/egress/split-tunnel-egress.sh
+
+[Install]
+WantedBy=multi-user.target

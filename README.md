@@ -28,6 +28,10 @@ within days and abused as an open relay. SSH gives you an encrypted tunnel and
 key-only authentication on a port you already run and already harden. On a
 1 vCPU box the encryption cost for an audio stream is negligible.
 
+> **Server setup lives in [`server/`](server/)** — docker-compose, multi-user
+> keys, and an optional egress allowlist that restricts the tunnel to specific
+> destinations. Clone the repo and you have both halves.
+
 ## Requirements
 
 | | |
@@ -44,9 +48,26 @@ rather than starting a second agent.
 
 ## 1. Server setup
 
-Run a dedicated, shell-less SSH endpoint in Docker. Isolation is the point: if
-this key ever leaks, the holder gets a TCP relay — **not an account on your
-host**.
+Full instructions, compose file and hardening scripts: **[`server/README.md`](server/README.md)**.
+
+```bash
+git clone https://github.com/RobyRew/split-tunnel
+cd split-tunnel/server
+cp /path/to/alice.pub pubkeys/alice.pub   # one .pub per person
+docker compose up -d
+sudo ufw allow 2223/tcp
+```
+
+Isolation is the point: a shell-less container means that if a key leaks, the
+holder gets a TCP relay — **not an account on your host**. Each person gets
+their own key file, so revoking one does not disturb the others.
+
+**Optional, off by default:** an egress allowlist that limits the tunnel to
+specific destinations (e.g. Spotify only), by UID, on IPv4 *and* IPv6. Useful
+when sharing with someone else — a leaked key then cannot be used as a
+general-purpose relay for abuse that would trace back to your IP.
+
+<details><summary>The original compose, inline</summary>
 
 ```yaml
 # /opt/split-tunnel/docker-compose.yml
@@ -70,10 +91,7 @@ services:
     security_opt: ["no-new-privileges:true"]
 ```
 
-```bash
-docker compose -f /opt/split-tunnel/docker-compose.yml up -d
-sudo ufw allow 2223/tcp
-```
+</details>
 
 > **Why `network_mode: host`.** A normally published Docker port sits behind
 > `ufw-docker`'s `DOCKER-USER` default-deny, whitelisted against a container IP

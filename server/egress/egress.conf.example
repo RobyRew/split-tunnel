@@ -1,0 +1,40 @@
+# SplitTunnel egress allowlist — DISABLED by default.
+#
+# When enabled, traffic forwarded by the tunnel user may ONLY reach the
+# resolved addresses of the domains below. Everything else is rejected, so a
+# leaked key cannot be used as a general-purpose relay (spam, scanning, abuse
+# that would come back to YOUR IP).
+#
+# Set to "yes" to enforce. Applying with ENABLED=no cleanly removes the rules.
+ENABLED=no
+
+# UID the tunnel's sshd runs as. Must match PUID in docker-compose.yml.
+# Deliberately NOT 1000 — that is usually your own login user, and these rules
+# filter by UID, so sharing it would police your own traffic too.
+UID_OWNER=8022
+
+# Refresh interval is handled by the systemd timer (default 5 min).
+#
+# Spotify. CDNs rotate addresses constantly, which is exactly why this resolves
+# names on a timer instead of pinning IPs. If playback breaks, look at what is
+# being rejected (see README) and add the domain here.
+DOMAINS="
+accounts.spotify.com
+api.spotify.com
+apresolve.spotify.com
+open.spotify.com
+login5.spotify.com
+spclient.wg.spotify.com
+gew1-spclient.spotify.com
+gae2-spclient.spotify.com
+ap-gew4.spotify.com
+ap-gue1.spotify.com
+audio4-ak-spotify-com.akamaized.net
+audio-ak-spotify-com.akamaized.net
+audio-fa.scdn.co
+i.scdn.co
+image-cdn-ak.spotifycdn.com
+image-cdn-fa.spotifycdn.com
+encore.scdn.co
+www.spotify.com
+"
