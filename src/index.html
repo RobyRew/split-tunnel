@@ -84,6 +84,10 @@
       </div>
       <label>Private key (.ppk) — leave empty to use a key already in Pageant
         <input id="key" placeholder="C:\Users\you\keys\tunnel.ppk" autocomplete="off" spellcheck="false" /></label>
+      <label>HTTP proxy — leave empty to detect automatically
+        <input id="proxy" placeholder="proxy.company.com:8080" autocomplete="off" spellcheck="false" /></label>
+      <p class="hint">Only needed on a work network that uses an automatic proxy
+        script, which this app cannot read. Detected now: <b id="proxynow">—</b></p>
     </details>
 
     <details class="card muted">

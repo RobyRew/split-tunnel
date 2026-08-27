@@ -14,7 +14,7 @@
 use serde::{Deserialize, Serialize};
 use ssh_key::{Algorithm, LineEnding, PrivateKey};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::auth::Tokens;
 
@@ -137,7 +137,12 @@ fn restrict(path: &Path) -> Result<(), String> {
 }
 
 /// Generate a key, exchange it for a certificate, and write everything out.
-pub fn enroll(dir: &Path, enroll_url: &str, tokens: &Tokens) -> Result<Enrollment, String> {
+pub fn enroll(
+    agent: &ureq::Agent,
+    dir: &Path,
+    enroll_url: &str,
+    tokens: &Tokens,
+) -> Result<Enrollment, String> {
     if enroll_url.trim().is_empty() {
         return Err("No enrollment URL configured.".into());
     }
@@ -148,8 +153,8 @@ pub fn enroll(dir: &Path, enroll_url: &str, tokens: &Tokens) -> Result<Enrollmen
         "public_key": public,
     });
 
-    let resp = ureq::post(enroll_url.trim())
-        .timeout(Duration::from_secs(30))
+    let resp = agent
+        .post(enroll_url.trim())
         .set("Authorization", &format!("Bearer {}", tokens.access_token))
         .send_json(body);
 

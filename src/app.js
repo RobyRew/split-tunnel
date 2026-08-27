@@ -18,7 +18,7 @@ if (!window.__TAURI__ || !window.__TAURI__.core) {
 
 const { invoke: rawInvoke } = window.__TAURI__.core;
 const $ = (id) => document.getElementById(id);
-const F = ["host", "user", "port", "key", "lport"];
+const F = ["host", "user", "port", "key", "lport", "proxy"];
 
 let connected = false;
 let lastAuth = null;
@@ -140,6 +140,7 @@ function readForm() {
     autostart: $("autostart").checked,
     manage_spotify: $("spot").checked,
     enroll_base: $("base").value.trim(),
+    proxy: $("proxy").value.trim(),
     oidc: window.__oidc || {},
   };
 }
@@ -281,15 +282,27 @@ function wireEvents() {
     withBusy(e.currentTarget, "Checking…", probeServer).catch(() => {}));
 
   $("copylog").addEventListener("click", async (e) => {
+    const b = e.currentTarget;
     const text = $("logbox").textContent;
+    // navigator.clipboard is refused in this webview, so go through the OS.
+    try {
+      await rawInvoke("copy_text", { text });
+      b.textContent = "Copied";
+      setTimeout(() => (b.textContent = "Copy"), 1400);
+      return;
+    } catch (_) {}
     try {
       await navigator.clipboard.writeText(text);
-      const b = e.currentTarget;
       b.textContent = "Copied";
       setTimeout(() => (b.textContent = "Copy"), 1400);
     } catch (_) {
-      // Clipboard can be refused; selecting the text still works.
-      say("Could not copy — select the log text and copy manually.", "err");
+      // Last resort: select it so Ctrl+C works.
+      const r = document.createRange();
+      r.selectNodeContents($("logbox"));
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(r);
+      say("Log selected — press Ctrl+C to copy.", "ok");
     }
   });
 
@@ -395,6 +408,7 @@ async function loadState() {
   $("lport").value = c.local_port;
   $("key").value = c.key_path;
   $("base").value = c.enroll_base || "";
+  $("proxy").value = c.proxy || "";
   $("spot").checked = c.manage_spotify;
   $("lporth").textContent = c.local_port;
 
@@ -410,7 +424,10 @@ async function loadState() {
   $("ssh").textContent = t.ssh_available ? t.ssh : `${t.ssh || "ssh"} (NOT FOUND)`;
 
   const diag = await invoke("diagnostics").catch(() => null);
-  if (diag) log("diag", "startup", brief(diag));
+  if (diag) {
+    log("diag", "startup", brief(diag));
+    $("proxynow").textContent = diag.proxy || "none";
+  }
 }
 
 async function boot() {

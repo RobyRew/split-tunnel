@@ -13,7 +13,7 @@
 //! The server checks both. See the enroll service for why.
 
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Where the identity provider lives. Baked into the *config*, never into the
 /// binary — the published build must contain no personal infrastructure.
@@ -167,10 +167,12 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, ()> {
     Ok(out)
 }
 
-fn post_form(url: &str, form: &[(&str, &str)]) -> Result<serde_json::Value, String> {
-    let resp = ureq::post(url)
-        .timeout(Duration::from_secs(20))
-        .send_form(form);
+fn post_form(
+    agent: &ureq::Agent,
+    url: &str,
+    form: &[(&str, &str)],
+) -> Result<serde_json::Value, String> {
+    let resp = agent.post(url).send_form(form);
     match resp {
         Ok(r) => r.into_json().map_err(|e| format!("bad response: {e}")),
         // The device flow signals "not yet" with a 400 body, so error bodies
@@ -183,7 +185,7 @@ fn post_form(url: &str, form: &[(&str, &str)]) -> Result<serde_json::Value, Stri
 }
 
 /// Step 1 — ask the provider for a user code.
-pub fn begin(settings: &OidcSettings) -> Result<DevicePrompt, String> {
+pub fn begin(agent: &ureq::Agent, settings: &OidcSettings) -> Result<DevicePrompt, String> {
     if !settings.is_complete() {
         return Err("Sign-in is not configured (issuer and client id).".into());
     }
@@ -196,7 +198,7 @@ pub fn begin(settings: &OidcSettings) -> Result<DevicePrompt, String> {
         form.push(("resource", settings.resource.trim()));
     }
 
-    let v = post_form(&settings.device_endpoint(), &form)?;
+    let v = post_form(agent, &settings.device_endpoint(), &form)?;
     if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
         return Err(describe(err, &v));
     }
@@ -226,6 +228,7 @@ pub fn begin(settings: &OidcSettings) -> Result<DevicePrompt, String> {
 /// `cancelled` lets the UI abort a poll that would otherwise run for the full
 /// code lifetime (typically ten minutes).
 pub fn poll(
+    agent: &ureq::Agent,
     settings: &OidcSettings,
     prompt: &DevicePrompt,
     cancelled: &dyn Fn() -> bool,
@@ -250,7 +253,7 @@ pub fn poll(
             form.push(("resource", settings.resource.trim()));
         }
 
-        let v = post_form(&settings.token_endpoint(), &form)?;
+        let v = post_form(agent, &settings.token_endpoint(), &form)?;
         match v.get("error").and_then(|e| e.as_str()) {
             None => return Ok(into_tokens(v)),
             Some("authorization_pending") => continue,
@@ -268,7 +271,11 @@ pub fn poll(
 
 /// Exchange a stored refresh token for a fresh access token, with no user
 /// interaction. This is what makes certificate renewal silent.
-pub fn refresh(settings: &OidcSettings, refresh_token: &str) -> Result<Tokens, String> {
+pub fn refresh(
+    agent: &ureq::Agent,
+    settings: &OidcSettings,
+    refresh_token: &str,
+) -> Result<Tokens, String> {
     let mut form: Vec<(&str, &str)> = vec![
         ("grant_type", "refresh_token"),
         ("refresh_token", refresh_token),
@@ -277,7 +284,7 @@ pub fn refresh(settings: &OidcSettings, refresh_token: &str) -> Result<Tokens, S
     if !settings.resource.trim().is_empty() {
         form.push(("resource", settings.resource.trim()));
     }
-    let v = post_form(&settings.token_endpoint(), &form)?;
+    let v = post_form(agent, &settings.token_endpoint(), &form)?;
     if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
         return Err(describe(err, &v));
     }

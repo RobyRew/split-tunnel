@@ -5,6 +5,7 @@ mod auth;
 mod autostart;
 mod config;
 mod enroll;
+mod net;
 mod pageant;
 mod spotify;
 mod tunnel;
@@ -94,8 +95,8 @@ fn discover(app: State<App>, base: String) -> Result<OidcSettings, String> {
         return Err("Enter the tunnel server address first.".into());
     }
 
-    let v: serde_json::Value = ureq::get(&url)
-        .timeout(std::time::Duration::from_secs(20))
+    let v: serde_json::Value = net::agent(&cfg.proxy, 20)
+        .get(&url)
         .call()
         .map_err(|e| format!("cannot reach {url}: {e}"))?
         .into_json()
@@ -148,10 +149,8 @@ fn check_server(app: State<App>, base: String) -> ServerProbe {
         return fail("No address entered".into());
     }
 
-    match ureq::get(&url)
-        .timeout(std::time::Duration::from_secs(10))
-        .call()
-    {
+    let proxy = net::detect(&cfg.proxy);
+    match net::agent(&cfg.proxy, 12).get(&url).call() {
         Ok(r) => match r.into_json::<serde_json::Value>() {
             Ok(v) => {
                 let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
@@ -182,15 +181,23 @@ fn check_server(app: State<App>, base: String) -> ServerProbe {
             // is the only thing that distinguishes them for the user.
             let m = t.to_string();
             let hint = if m.contains("dns") || m.contains("resolve") {
-                "Address not found — check the spelling"
+                "Address not found — check the spelling".to_string()
             } else if m.contains("certificate") || m.contains("tls") {
-                "HTTPS certificate problem"
-            } else if m.contains("timed out") || m.contains("timeout") {
-                "No response — the server may be down, or blocked by this network"
+                "HTTPS certificate problem".to_string()
+            } else if proxy.url.is_empty() && !proxy.pac_url.is_empty() {
+                // The give-away for a managed network: the browser works via a
+                // PAC script we cannot read, so we are the only thing offline.
+                "No response. This PC uses an automatic proxy script that this \
+                 app cannot read — open Manual setup and enter the proxy address"
+                    .to_string()
+            } else if proxy.url.is_empty() {
+                "No response — the server may be down, or this network may need \
+                 a proxy (set one under Manual setup)"
+                    .to_string()
             } else {
-                "Cannot connect"
+                format!("No response via proxy {}", proxy.url)
             };
-            fail(hint.to_string())
+            fail(hint)
         }
     }
 }
@@ -211,6 +218,8 @@ fn diagnostics(app: State<App>) -> serde_json::Value {
         "oidc_issuer": cfg.oidc.issuer,
         "oidc_client_id": cfg.oidc.client_id,
         "oidc_scopes": cfg.oidc.scopes,
+        "proxy": net::detect(&cfg.proxy).describe(),
+        "proxy_setting": cfg.proxy,
         "ssh_path": ssh.display().to_string(),
         "ssh_found": ssh.exists(),
         "have_key": exists(enroll::key_path(&app.dir)),
@@ -219,6 +228,36 @@ fn diagnostics(app: State<App>) -> serde_json::Value {
         "have_tokens": Tokens::load(&app.dir).is_some(),
         "enrollment": Enrollment::load(&app.dir),
     })
+}
+
+/// Copy text via the OS, because the webview's navigator.clipboard is refused
+/// in this context — and a log you cannot copy is not much of a log.
+#[tauri::command]
+fn copy_text(text: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::io::Write;
+        use std::os::windows::process::CommandExt;
+        use std::process::{Command, Stdio};
+        let mut child = Command::new("clip")
+            .stdin(Stdio::piped())
+            .creation_flags(0x0800_0000)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        child
+            .stdin
+            .as_mut()
+            .ok_or("no stdin")?
+            .write_all(text.as_bytes())
+            .map_err(|e| e.to_string())?;
+        child.wait().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = text;
+        Err("clipboard not supported on this platform".into())
+    }
 }
 
 #[tauri::command]
@@ -239,7 +278,8 @@ fn sign_in(app: State<App>) -> Result<DevicePrompt, String> {
         return Err("Enter the tunnel server address and press Connect account first.".into());
     }
 
-    let prompt = auth::begin(&cfg.oidc)?;
+    let agent = net::agent(&cfg.proxy, 20);
+    let prompt = auth::begin(&agent, &cfg.oidc)?;
     // Send them straight to the pre-filled page. The code stays on screen for
     // the case where the browser opens somewhere unexpected.
     auth::open_in_browser(&prompt.verification_uri_complete);
@@ -254,7 +294,8 @@ fn sign_in(app: State<App>) -> Result<DevicePrompt, String> {
 
     std::thread::spawn(move || {
         let cancelled = || cancel.load(Ordering::SeqCst);
-        let tokens = match auth::poll(&cfg.oidc, &p, &cancelled) {
+        let agent = net::agent(&cfg.proxy, 20);
+        let tokens = match auth::poll(&agent, &cfg.oidc, &p, &cancelled) {
             Ok(t) => t,
             Err(e) => {
                 *state.lock().unwrap() = AuthState::Failed(e);
@@ -267,7 +308,7 @@ fn sign_in(app: State<App>) -> Result<DevicePrompt, String> {
         }
 
         *state.lock().unwrap() = AuthState::Enrolling;
-        match enroll::enroll(&dir, &cfg.enroll_url(), &tokens) {
+        match enroll::enroll(&agent, &dir, &cfg.enroll_url(), &tokens) {
             Ok(rec) => {
                 *state.lock().unwrap() = AuthState::SignedIn {
                     email: if rec.identity.is_empty() { tokens.email.clone() } else { rec.identity.clone() },
@@ -308,9 +349,10 @@ fn renew_quietly(dir: &PathBuf, cfg: &Config) -> Result<Enrollment, String> {
     if stored.refresh_token.is_empty() {
         return Err("no refresh token — sign in again".into());
     }
-    let fresh = auth::refresh(&cfg.oidc, &stored.refresh_token)?;
+    let agent = net::agent(&cfg.proxy, 20);
+    let fresh = auth::refresh(&agent, &cfg.oidc, &stored.refresh_token)?;
     fresh.save(dir)?;
-    enroll::enroll(dir, &cfg.enroll_url(), &fresh)
+    enroll::enroll(&agent, dir, &cfg.enroll_url(), &fresh)
 }
 
 #[tauri::command]
@@ -501,6 +543,7 @@ fn main() {
             check_server,
             diagnostics,
             app_version,
+            copy_text,
             sign_in,
             cancel_sign_in,
             sign_out,

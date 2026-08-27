@@ -32,25 +32,68 @@ pub fn enable(exe: &Path) -> Result<(), String> {
         .output()
         .map_err(|e| e.to_string())?;
     if out.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        return Ok(());
     }
+
+    // A managed machine commonly forbids creating scheduled tasks outright, and
+    // bare "ERROR: Access is denied." tells the user nothing about what to do.
+    // Fall back to the per-user Run key, which usually is permitted.
+    let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    if err.to_lowercase().contains("access is denied") {
+        let run = quiet(&mut Command::new("reg"))
+            .args([
+                "add",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                "/v", TASK,
+                "/t", "REG_SZ",
+                "/d", &format!("\"{}\" --minimised", exe.display()),
+                "/f",
+            ])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if run.status.success() {
+            return Ok(());
+        }
+        return Err(
+            "This PC does not allow adding start-up items (both the Task \
+             Scheduler and the Run key were refused). Start SplitTunnel \
+             manually, or ask IT."
+                .into(),
+        );
+    }
+    Err(err)
 }
 
 pub fn disable() -> Result<(), String> {
-    let out = quiet(&mut Command::new("schtasks"))
+    // Remove both possible homes; neither existing is not an error.
+    let _ = quiet(&mut Command::new("schtasks"))
         .args(["/Delete", "/F", "/TN", TASK])
-        .output()
-        .map_err(|e| e.to_string())?;
-    // Deleting a task that was never created is not an error worth surfacing.
-    let _ = out;
+        .output();
+    let _ = quiet(&mut Command::new("reg"))
+        .args([
+            "delete",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+            "/v", TASK, "/f",
+        ])
+        .output();
     Ok(())
 }
 
 pub fn is_enabled() -> bool {
-    quiet(&mut Command::new("schtasks"))
+    let task = quiet(&mut Command::new("schtasks"))
         .args(["/Query", "/TN", TASK])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if task {
+        return true;
+    }
+    quiet(&mut Command::new("reg"))
+        .args([
+            "query",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+            "/v", TASK,
+        ])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)

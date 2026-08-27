@@ -30,6 +30,12 @@ pub struct Config {
     /// Cached from `<enroll_base>/config` so a sign-in can start offline-ish
     /// and so the UI can show which provider it will use.
     pub oidc: OidcSettings,
+
+    /// Manual HTTP proxy, e.g. "proxy.corp.example:8080". Empty means detect
+    /// it: environment first, then Windows settings. Needed by hand only when
+    /// the machine is configured by a PAC script, which cannot be read without
+    /// a JavaScript engine.
+    pub proxy: String,
 }
 
 impl Default for Config {
@@ -44,6 +50,7 @@ impl Default for Config {
             manage_spotify: false,
             enroll_base: String::new(),
             oidc: OidcSettings::default(),
+            proxy: String::new(),
         }
     }
 }
