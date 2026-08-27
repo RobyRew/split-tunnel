@@ -29,9 +29,14 @@
       <h2>Account</h2>
       <label>Tunnel server
         <input id="base" placeholder="tunnel.example.com" autocomplete="off" spellcheck="false" /></label>
+      <div class="srv">
+        <span id="srvdot" class="dot idle"></span>
+        <span id="srvtext" class="srvtext idle">Enter your tunnel server address</span>
+        <button id="recheck" class="link">Re-check</button>
+      </div>
       <p class="hint">Sign in with the account your administrator authorised. Your key is
         created on this PC and never leaves it.</p>
-      <button id="signin" class="primary wide">Sign in</button>
+      <button id="signin" class="primary wide" disabled>Sign in</button>
     </section>
 
     <!-- Waiting for the browser half of the device flow. -->

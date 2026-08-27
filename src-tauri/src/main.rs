@@ -107,6 +107,7 @@ fn discover(app: State<App>, base: String) -> Result<OidcSettings, String> {
         client_id: s("client_id"),
         resource: s("resource"),
         scope: s("scope"),
+        scopes: s("scopes"),
     };
     if !settings.is_complete() {
         return Err("That server did not return a usable sign-in configuration.".into());
@@ -116,6 +117,82 @@ fn discover(app: State<App>, base: String) -> Result<OidcSettings, String> {
     cfg.save(&app.dir)?;
     *app.cfg.lock().unwrap() = cfg;
     Ok(settings)
+}
+
+/// Result of probing the enrollment server, so the UI can say whether the
+/// address actually works *before* the user presses Sign in and waits.
+#[derive(Serialize, Clone, Debug)]
+struct ServerProbe {
+    reachable: bool,
+    detail: String,
+    issuer: String,
+    cert_ttl: String,
+}
+
+/// Probe `<base>/config`. Deliberately reports *why* it failed: "unreachable"
+/// with no reason is the thing that makes people re-type a correct address.
+#[tauri::command]
+fn check_server(app: State<App>, base: String) -> ServerProbe {
+    let mut cfg = app.cfg.lock().unwrap().clone();
+    cfg.enroll_base = base.trim().to_string();
+    let url = cfg.discovery_url();
+
+    let fail = |detail: String| ServerProbe {
+        reachable: false,
+        detail,
+        issuer: String::new(),
+        cert_ttl: String::new(),
+    };
+
+    if url.is_empty() {
+        return fail("No address entered".into());
+    }
+
+    match ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .call()
+    {
+        Ok(r) => match r.into_json::<serde_json::Value>() {
+            Ok(v) => {
+                let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                if s("client_id").is_empty() || s("issuer").is_empty() {
+                    return fail("Reachable, but not configured for sign-in".into());
+                }
+                ServerProbe {
+                    reachable: true,
+                    detail: "Online".into(),
+                    // Host only — the full issuer URL is noise in a status line.
+                    issuer: s("issuer")
+                        .replace("https://", "")
+                        .split('/')
+                        .next()
+                        .unwrap_or("")
+                        .to_string(),
+                    cert_ttl: s("cert_ttl"),
+                }
+            }
+            Err(_) => fail("Something answered, but it is not a tunnel server".into()),
+        },
+        Err(ureq::Error::Status(404, _)) => {
+            fail("Reached the host, but no tunnel server there (404)".into())
+        }
+        Err(ureq::Error::Status(code, _)) => fail(format!("Server answered HTTP {code}")),
+        Err(ureq::Error::Transport(t)) => {
+            // ureq folds DNS, TCP and TLS problems into one type; the message
+            // is the only thing that distinguishes them for the user.
+            let m = t.to_string();
+            let hint = if m.contains("dns") || m.contains("resolve") {
+                "Address not found — check the spelling"
+            } else if m.contains("certificate") || m.contains("tls") {
+                "HTTPS certificate problem"
+            } else if m.contains("timed out") || m.contains("timeout") {
+                "No response — the server may be down, or blocked by this network"
+            } else {
+                "Cannot connect"
+            };
+            fail(hint.to_string())
+        }
+    }
 }
 
 #[tauri::command]
@@ -390,6 +467,7 @@ fn main() {
             set_autostart,
             autostart_enabled,
             discover,
+            check_server,
             sign_in,
             cancel_sign_in,
             sign_out,

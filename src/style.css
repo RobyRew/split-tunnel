@@ -70,3 +70,42 @@ details.card > summary::after{content:" ▸";color:var(--dim)}
 details.card[open] > summary::after{content:" ▾"}
 details.card[open] > summary{margin-bottom:10px}
 details.card > *:not(summary){margin-top:0}
+
+/* ── Feedback: busy / done / failed on every button ──────────────────────
+   Pressing a button used to do nothing observable for several seconds,
+   which reads as "broken" long before it reads as "working". */
+button:disabled{opacity:.55;cursor:not-allowed}
+button.busy{color:var(--dim)}
+button.done{background:#0e2119;border-color:#12402f;color:var(--accent)}
+button.failed{background:#1e1014;border-color:#3d1622;color:var(--bad)}
+button.primary.done,button.primary.failed{background-image:none}
+.spin{
+  display:inline-block;width:11px;height:11px;margin-right:7px;
+  vertical-align:-1px;border-radius:50%;
+  border:2px solid rgba(255,255,255,.22);border-top-color:var(--accent);
+  animation:spin .7s linear infinite;
+}
+.spin.dark{border-top-color:var(--accent2)}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Server reachability line ────────────────────────────────────────── */
+.srv{display:flex;align-items:center;gap:8px;margin:-2px 0 10px}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--dim)}
+.dot.checking{background:var(--warn);animation:pulse 1s ease-in-out infinite}
+.dot.up{background:var(--accent);box-shadow:0 0 0 3px rgba(16,185,129,.16)}
+.dot.down{background:var(--bad);box-shadow:0 0 0 3px rgba(244,63,94,.14)}
+@keyframes pulse{50%{opacity:.35}}
+.srvtext{font-size:11.5px;color:var(--dim);flex:1;line-height:1.35}
+.srvtext.up{color:var(--accent)}
+.srvtext.down{color:var(--bad)}
+.srvtext.checking{color:var(--warn)}
+button.link{
+  flex:none;width:auto;padding:3px 8px;font-size:11px;font-weight:500;
+  background:transparent;border:1px solid var(--line);color:var(--dim);border-radius:6px;
+}
+button.link:hover{color:var(--fg)}
+
+/* The primary button's gradient is bright, so the generic dim busy colour and
+   the green spinner both vanish on it. Keep the dark ink instead. */
+button.primary.busy{color:#04120d}
+button.primary .spin{border-color:rgba(0,0,0,.22);border-top-color:#04120d}

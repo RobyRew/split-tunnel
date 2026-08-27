@@ -26,6 +26,13 @@ pub struct OidcSettings {
     pub resource: String,
     /// Extra scope that authorises tunnel use, e.g. "tunnel:connect".
     pub scope: String,
+    /// The FULL scope string to request, as dictated by the server.
+    ///
+    /// Server-driven because identity providers grant user scopes per
+    /// application: asking for one the provider has not granted fails the
+    /// whole sign-in with `invalid_scope`. Letting the server say what to ask
+    /// for means that changes there never need a new client build.
+    pub scopes: String,
 }
 
 impl OidcSettings {
@@ -39,7 +46,13 @@ impl OidcSettings {
         format!("{}/token", self.issuer.trim_end_matches('/'))
     }
     fn scopes(&self) -> String {
-        let mut s = vec!["openid", "profile", "email", "offline_access"];
+        if !self.scopes.trim().is_empty() {
+            return self.scopes.trim().to_string();
+        }
+        // Fallback for a server too old to advertise a scope list. Kept
+        // conservative: `openid` and `offline_access` are always grantable,
+        // whereas `email` and `profile` are per-application.
+        let mut s = vec!["openid", "offline_access"];
         if !self.scope.trim().is_empty() {
             s.push(self.scope.trim());
         }
