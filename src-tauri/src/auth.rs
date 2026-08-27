@@ -13,7 +13,7 @@
 //! The server checks both. See the enroll service for why.
 
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Where the identity provider lives. Baked into the *config*, never into the
 /// binary — the published build must contain no personal infrastructure.

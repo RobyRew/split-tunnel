@@ -233,31 +233,30 @@ fn diagnostics(app: State<App>) -> serde_json::Value {
 /// Copy text via the OS, because the webview's navigator.clipboard is refused
 /// in this context — and a log you cannot copy is not much of a log.
 #[tauri::command]
+#[cfg(windows)]
 fn copy_text(text: String) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        use std::io::Write;
-        use std::os::windows::process::CommandExt;
-        use std::process::{Command, Stdio};
-        let mut child = Command::new("clip")
-            .stdin(Stdio::piped())
-            .creation_flags(0x0800_0000)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        child
-            .stdin
-            .as_mut()
-            .ok_or("no stdin")?
-            .write_all(text.as_bytes())
-            .map_err(|e| e.to_string())?;
-        child.wait().map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = text;
-        Err("clipboard not supported on this platform".into())
-    }
+    use std::io::Write;
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("clip")
+        .stdin(Stdio::piped())
+        .creation_flags(0x0800_0000)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    child
+        .stdin
+        .as_mut()
+        .ok_or("no stdin")?
+        .write_all(text.as_bytes())
+        .map_err(|e| e.to_string())?;
+    child.wait().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+#[cfg(not(windows))]
+fn copy_text(_text: String) -> Result<(), String> {
+    Err("clipboard not supported on this platform".into())
 }
 
 #[tauri::command]
