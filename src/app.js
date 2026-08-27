@@ -184,6 +184,7 @@ async function probeServer() {
       clearBanner();
     } else {
       setDot("down", r.detail);
+      if (r.raw) log("ERROR", "check_server raw", r.raw);
     }
   } catch (e) {
     setDot("down", String(e));
@@ -280,6 +281,23 @@ function wireEvents() {
   $("base").addEventListener("input", () => { save(true); scheduleProbe(); });
   $("recheck").addEventListener("click", (e) =>
     withBusy(e.currentTarget, "Checking…", probeServer).catch(() => {}));
+
+  $("nettest").addEventListener("click", async (e) => {
+    $("card-log").open = true;
+    try {
+      await withBusy(e.currentTarget, "Testing…", async () => {
+        await save(true);
+        const rows = await rawInvoke("network_test");
+        log("test", "── connectivity report ──");
+        rows.forEach((r) => log(r.ok ? "PASS" : "FAIL", r.name, r.detail));
+        const bad = rows.filter((r) => !r.ok).map((r) => r.name);
+        say(bad.length ? `Failed: ${bad.join(", ")}` : "All checks passed.",
+            bad.length ? "err" : "ok");
+      });
+    } catch (err) {
+      fail(String(err));
+    }
+  });
 
   $("copylog").addEventListener("click", async (e) => {
     const b = e.currentTarget;

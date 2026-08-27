@@ -173,3 +173,91 @@ pub fn agent(override_url: &str, timeout_secs: u64) -> ureq::Agent {
     }
     b.build()
 }
+
+/// One line of a connectivity report.
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct Check {
+    pub name: String,
+    pub ok: bool,
+    pub detail: String,
+}
+
+fn check(name: &str, ok: bool, detail: String) -> Check {
+    Check { name: name.into(), ok, detail }
+}
+
+/// Resolve a host, returning every address, so a v6-only answer is visible.
+fn resolve(host: &str, port: u16) -> Result<Vec<std::net::SocketAddr>, String> {
+    use std::net::ToSocketAddrs;
+    (host, port)
+        .to_socket_addrs()
+        .map(|i| i.collect())
+        .map_err(|e| e.to_string())
+}
+
+/// Can we open a TCP connection at all? Separating this from the HTTPS request
+/// is the whole point: a proxy can carry HTTPS but never the SSH tunnel, so
+/// "the website works" says nothing about whether the tunnel will.
+fn tcp(host: &str, port: u16, secs: u64) -> Check {
+    let label = format!("TCP {host}:{port}");
+    let addrs = match resolve(host, port) {
+        Ok(a) if !a.is_empty() => a,
+        Ok(_) => return check(&label, false, "no addresses returned".into()),
+        Err(e) => return check(&label, false, format!("DNS failed: {e}")),
+    };
+    let started = std::time::Instant::now();
+    for a in &addrs {
+        if std::net::TcpStream::connect_timeout(a, Duration::from_secs(secs)).is_ok() {
+            return check(&label, true, format!("connected to {a} in {:?}", started.elapsed()));
+        }
+    }
+    check(
+        &label,
+        false,
+        format!("could not connect to {} after {:?}", addrs[0], started.elapsed()),
+    )
+}
+
+/// Everything needed to tell a blocked domain apart from a blocked port, a
+/// dead server, a proxy requirement, or TLS interception.
+pub fn connectivity_report(base_host: &str, tunnel_port: u16, proxy_override: &str) -> Vec<Check> {
+    let mut out = Vec::new();
+    let info = detect(proxy_override);
+    out.push(check("Proxy", true, info.describe()));
+
+    if base_host.is_empty() {
+        out.push(check("Server address", false, "not set".into()));
+        return out;
+    }
+
+    match resolve(base_host, 443) {
+        Ok(a) => out.push(check(
+            "DNS",
+            !a.is_empty(),
+            a.iter().map(|x| x.ip().to_string()).collect::<Vec<_>>().join(", "),
+        )),
+        Err(e) => out.push(check("DNS", false, e)),
+    }
+
+    // A control, so "everything is blocked" is distinguishable from "this
+    // domain is blocked" — the usual verdict on a brand-new hostname.
+    out.push(tcp("www.microsoft.com", 443, 6));
+    out.push(tcp(base_host, 443, 8));
+    out.push(tcp(base_host, tunnel_port, 8));
+
+    // The real HTTPS request, with the untranslated error.
+    let url = format!("https://{base_host}/config");
+    let started = std::time::Instant::now();
+    match agent(proxy_override, 15).get(&url).call() {
+        Ok(r) => out.push(check("HTTPS /config", true, format!("HTTP {}", r.status()))),
+        Err(ureq::Error::Status(c, _)) => {
+            out.push(check("HTTPS /config", false, format!("HTTP {c}")))
+        }
+        Err(e) => out.push(check(
+            "HTTPS /config",
+            false,
+            format!("{e} (after {:?})", started.elapsed()),
+        )),
+    }
+    out
+}

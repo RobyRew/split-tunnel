@@ -126,6 +126,10 @@ fn discover(app: State<App>, base: String) -> Result<OidcSettings, String> {
 struct ServerProbe {
     reachable: bool,
     detail: String,
+    /// The untranslated error. Friendly text is for the status line; this is
+    /// what actually identifies the fault, and throwing it away cost a round
+    /// trip and a wrong diagnosis.
+    raw: String,
     issuer: String,
     cert_ttl: String,
 }
@@ -138,15 +142,16 @@ fn check_server(app: State<App>, base: String) -> ServerProbe {
     cfg.enroll_base = base.trim().to_string();
     let url = cfg.discovery_url();
 
-    let fail = |detail: String| ServerProbe {
+    let fail = |detail: String, raw: String| ServerProbe {
         reachable: false,
         detail,
+        raw,
         issuer: String::new(),
         cert_ttl: String::new(),
     };
 
     if url.is_empty() {
-        return fail("No address entered".into());
+        return fail("No address entered".into(), String::new());
     }
 
     let proxy = net::detect(&cfg.proxy);
@@ -155,11 +160,12 @@ fn check_server(app: State<App>, base: String) -> ServerProbe {
             Ok(v) => {
                 let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
                 if s("client_id").is_empty() || s("issuer").is_empty() {
-                    return fail("Reachable, but not configured for sign-in".into());
+                    return fail("Reachable, but not configured for sign-in".into(), String::new());
                 }
                 ServerProbe {
                     reachable: true,
                     detail: "Online".into(),
+                    raw: String::new(),
                     // Host only — the full issuer URL is noise in a status line.
                     issuer: s("issuer")
                         .replace("https://", "")
@@ -170,19 +176,23 @@ fn check_server(app: State<App>, base: String) -> ServerProbe {
                     cert_ttl: s("cert_ttl"),
                 }
             }
-            Err(_) => fail("Something answered, but it is not a tunnel server".into()),
+            Err(e) => fail("Something answered, but it is not a tunnel server".into(), e.to_string()),
         },
-        Err(ureq::Error::Status(404, _)) => {
-            fail("Reached the host, but no tunnel server there (404)".into())
+        Err(ureq::Error::Status(404, _)) => fail(
+            "Reached the host, but no tunnel server there (404)".into(),
+            "HTTP 404".into(),
+        ),
+        Err(ureq::Error::Status(code, _)) => {
+            fail(format!("Server answered HTTP {code}"), format!("HTTP {code}"))
         }
-        Err(ureq::Error::Status(code, _)) => fail(format!("Server answered HTTP {code}")),
         Err(ureq::Error::Transport(t)) => {
             // ureq folds DNS, TCP and TLS problems into one type; the message
             // is the only thing that distinguishes them for the user.
             let m = t.to_string();
-            let hint = if m.contains("dns") || m.contains("resolve") {
+            let lower = m.to_lowercase();
+            let hint = if lower.contains("dns") || lower.contains("resolve") {
                 "Address not found — check the spelling".to_string()
-            } else if m.contains("certificate") || m.contains("tls") {
+            } else if lower.contains("certificate") || lower.contains("tls") || lower.contains("handshake") {
                 "HTTPS certificate problem".to_string()
             } else if proxy.url.is_empty() && !proxy.pac_url.is_empty() {
                 // The give-away for a managed network: the browser works via a
@@ -197,7 +207,7 @@ fn check_server(app: State<App>, base: String) -> ServerProbe {
             } else {
                 format!("No response via proxy {}", proxy.url)
             };
-            fail(hint)
+            fail(hint, m)
         }
     }
 }
@@ -232,6 +242,23 @@ fn diagnostics(app: State<App>) -> serde_json::Value {
 
 /// Copy text via the OS, because the webview's navigator.clipboard is refused
 /// in this context — and a log you cannot copy is not much of a log.
+/// Run a full connectivity report. Exists so a network problem can be
+/// identified from inside the app instead of asking the user to run shell
+/// commands they will reasonably not run.
+#[tauri::command]
+fn network_test(app: State<App>) -> Vec<net::Check> {
+    let cfg = app.cfg.lock().unwrap().clone();
+    let host = cfg
+        .enroll_base_url()
+        .replace("https://", "")
+        .replace("http://", "")
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .to_string();
+    net::connectivity_report(&host, cfg.port, &cfg.proxy)
+}
+
 #[tauri::command]
 #[cfg(windows)]
 fn copy_text(text: String) -> Result<(), String> {
@@ -543,6 +570,7 @@ fn main() {
             diagnostics,
             app_version,
             copy_text,
+            network_test,
             sign_in,
             cancel_sign_in,
             sign_out,

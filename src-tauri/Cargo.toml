@@ -1,6 +1,6 @@
 [package]
 name = "split-tunnel"
-version = "0.2.3"
+version = "0.2.4"
 description = "Route a single Windows application through your own VPS over SOCKS5"
 authors = ["RobyRew"]
 edition = "2021"
