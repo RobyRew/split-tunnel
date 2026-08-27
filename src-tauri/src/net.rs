@@ -8,11 +8,18 @@
 //! Resolution order — first hit wins:
 //!   1. an explicit proxy in the app's settings
 //!   2. HTTPS_PROXY / HTTP_PROXY / ALL_PROXY (either case)
-//!   3. Windows: HKCU Internet Settings, if ProxyEnable is 1
+//!   3. Windows: ask Windows itself, via .NET's system proxy resolver
+//!   4. Windows: HKCU Internet Settings, if ProxyEnable is 1
 //!
-//! A PAC script (`AutoConfigURL`) is deliberately NOT evaluated — that needs a
-//! JavaScript engine. It is detected and reported, so the UI can tell the user
-//! to enter the proxy by hand instead of leaving them guessing.
+//! Step 3 is the one that matters on a managed network. A WPAD-discovered
+//! proxy — found via DHCP option 252 or a `wpad.<domain>` DNS record — leaves
+//! `ProxyEnable` at 0 and writes no `AutoConfigURL`, so reading the registry
+//! finds nothing while every browser on the machine is quietly proxying. That
+//! is exactly the case that made this app time out against a server the user
+//! could open in a browser on the same PC.
+//!
+//! `GetSystemWebProxy()` resolves WPAD *and* evaluates PAC scripts, because
+//! Windows already has the JavaScript engine we do not.
 
 use std::time::Duration;
 
@@ -125,6 +132,64 @@ fn normalise(v: &str) -> String {
     }
 }
 
+/// Ask Windows which proxy applies to a specific URL.
+///
+/// PAC scripts can return different answers per destination, so this must be
+/// asked per URL rather than once globally.
+#[cfg(windows)]
+fn system_proxy_for(target: &str) -> Option<String> {
+    use std::os::windows::process::CommandExt;
+
+    // The target is user-typed, and it is interpolated into a script. Refuse
+    // anything that is not plainly a URL rather than trying to quote our way
+    // out of trouble.
+    if target.is_empty()
+        || target.len() > 300
+        || !target
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b":/._-?=&%~".contains(&c))
+    {
+        return None;
+    }
+
+    let script = format!(
+        "$u=[Uri]'{target}'; \
+         $p=[System.Net.WebRequest]::GetSystemWebProxy().GetProxy($u); \
+         if ($p -ne $null -and $p.AbsoluteUri -ne $u.AbsoluteUri) {{ $p.AbsoluteUri }}"
+    );
+    let out = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(0x0800_0000)
+        .output()
+        .ok()?;
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() || !s.starts_with("http") {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+#[cfg(not(windows))]
+fn system_proxy_for(_target: &str) -> Option<String> {
+    None
+}
+
+/// Work out which proxy to use.
+///
+/// `target` is the URL we are about to fetch; it steers PAC evaluation.
+pub fn detect_for(override_url: &str, target: &str) -> ProxyInfo {
+    let mut info = detect(override_url);
+    if !info.url.is_empty() {
+        return info;
+    }
+    if let Some(p) = system_proxy_for(target) {
+        info.url = normalise(&p);
+        info.source = "Windows (WPAD/PAC)".into();
+    }
+    info
+}
+
 /// Work out which proxy to use. `override_url` comes from the app's settings.
 pub fn detect(override_url: &str) -> ProxyInfo {
     let mut info = ProxyInfo::default();
@@ -160,9 +225,17 @@ pub fn detect(override_url: &str) -> ProxyInfo {
     info
 }
 
+/// Build an HTTP agent honouring the resolved proxy for `target`.
+pub fn agent_for(override_url: &str, target: &str, timeout_secs: u64) -> ureq::Agent {
+    build(detect_for(override_url, target), timeout_secs)
+}
+
 /// Build an HTTP agent honouring the resolved proxy.
 pub fn agent(override_url: &str, timeout_secs: u64) -> ureq::Agent {
-    let info = detect(override_url);
+    build(detect(override_url), timeout_secs)
+}
+
+fn build(info: ProxyInfo, timeout_secs: u64) -> ureq::Agent {
     let mut b = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(timeout_secs.min(15)))
         .timeout(Duration::from_secs(timeout_secs));
@@ -222,8 +295,18 @@ fn tcp(host: &str, port: u16, secs: u64) -> Check {
 /// dead server, a proxy requirement, or TLS interception.
 pub fn connectivity_report(base_host: &str, tunnel_port: u16, proxy_override: &str) -> Vec<Check> {
     let mut out = Vec::new();
-    let info = detect(proxy_override);
+    let target = format!("https://{base_host}/config");
+    let info = detect_for(proxy_override, &target);
     out.push(check("Proxy", true, info.describe()));
+
+    // Shown separately from the resolved proxy: knowing that Windows *has* an
+    // answer for this URL is what distinguishes "no proxy" from "a proxy we
+    // failed to find".
+    out.push(check(
+        "Windows proxy for this URL",
+        true,
+        system_proxy_for(&target).unwrap_or_else(|| "direct (no proxy)".into()),
+    ));
 
     if base_host.is_empty() {
         out.push(check("Server address", false, "not set".into()));
@@ -246,10 +329,17 @@ pub fn connectivity_report(base_host: &str, tunnel_port: u16, proxy_override: &s
     out.push(tcp(base_host, tunnel_port, 8));
 
     // The real HTTPS request, with the untranslated error.
-    let url = format!("https://{base_host}/config");
+    let url = target.clone();
     let started = std::time::Instant::now();
-    match agent(proxy_override, 15).get(&url).call() {
+    match agent_for(proxy_override, &url, 15).get(&url).call() {
         Ok(r) => out.push(check("HTTPS /config", true, format!("HTTP {}", r.status()))),
+        Err(ureq::Error::Status(407, _)) => out.push(check(
+            "HTTPS /config",
+            false,
+            "HTTP 407 — the proxy demands authentication (likely NTLM/Kerberos, \
+             which this client cannot do)"
+                .into(),
+        )),
         Err(ureq::Error::Status(c, _)) => {
             out.push(check("HTTPS /config", false, format!("HTTP {c}")))
         }

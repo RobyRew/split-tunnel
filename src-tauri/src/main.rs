@@ -95,7 +95,7 @@ fn discover(app: State<App>, base: String) -> Result<OidcSettings, String> {
         return Err("Enter the tunnel server address first.".into());
     }
 
-    let v: serde_json::Value = net::agent(&cfg.proxy, 20)
+    let v: serde_json::Value = net::agent_for(&cfg.proxy, &url, 20)
         .get(&url)
         .call()
         .map_err(|e| format!("cannot reach {url}: {e}"))?
@@ -154,8 +154,8 @@ fn check_server(app: State<App>, base: String) -> ServerProbe {
         return fail("No address entered".into(), String::new());
     }
 
-    let proxy = net::detect(&cfg.proxy);
-    match net::agent(&cfg.proxy, 12).get(&url).call() {
+    let proxy = net::detect_for(&cfg.proxy, &url);
+    match net::agent_for(&cfg.proxy, &url, 12).get(&url).call() {
         Ok(r) => match r.into_json::<serde_json::Value>() {
             Ok(v) => {
                 let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
@@ -228,7 +228,7 @@ fn diagnostics(app: State<App>) -> serde_json::Value {
         "oidc_issuer": cfg.oidc.issuer,
         "oidc_client_id": cfg.oidc.client_id,
         "oidc_scopes": cfg.oidc.scopes,
-        "proxy": net::detect(&cfg.proxy).describe(),
+        "proxy": net::detect_for(&cfg.proxy, &cfg.discovery_url()).describe(),
         "proxy_setting": cfg.proxy,
         "ssh_path": ssh.display().to_string(),
         "ssh_found": ssh.exists(),
@@ -304,7 +304,7 @@ fn sign_in(app: State<App>) -> Result<DevicePrompt, String> {
         return Err("Enter the tunnel server address and press Connect account first.".into());
     }
 
-    let agent = net::agent(&cfg.proxy, 20);
+    let agent = net::agent_for(&cfg.proxy, &cfg.oidc.issuer, 20);
     let prompt = auth::begin(&agent, &cfg.oidc)?;
     // Send them straight to the pre-filled page. The code stays on screen for
     // the case where the browser opens somewhere unexpected.
@@ -320,7 +320,7 @@ fn sign_in(app: State<App>) -> Result<DevicePrompt, String> {
 
     std::thread::spawn(move || {
         let cancelled = || cancel.load(Ordering::SeqCst);
-        let agent = net::agent(&cfg.proxy, 20);
+        let agent = net::agent_for(&cfg.proxy, &cfg.oidc.issuer, 20);
         let tokens = match auth::poll(&agent, &cfg.oidc, &p, &cancelled) {
             Ok(t) => t,
             Err(e) => {
@@ -375,7 +375,7 @@ fn renew_quietly(dir: &PathBuf, cfg: &Config) -> Result<Enrollment, String> {
     if stored.refresh_token.is_empty() {
         return Err("no refresh token — sign in again".into());
     }
-    let agent = net::agent(&cfg.proxy, 20);
+    let agent = net::agent_for(&cfg.proxy, &cfg.oidc.issuer, 20);
     let fresh = auth::refresh(&agent, &cfg.oidc, &stored.refresh_token)?;
     fresh.save(dir)?;
     enroll::enroll(&agent, dir, &cfg.enroll_url(), &fresh)
