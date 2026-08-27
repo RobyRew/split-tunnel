@@ -18,12 +18,14 @@
         <defs><linearGradient id="g" x1="23" y1="32" x2="52" y2="48" gradientUnits="userSpaceOnUse">
           <stop stop-color="#10b981"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs>
       </svg>
-      <div><h1>SplitTunnel</h1><p class="sub">One app through your server</p></div>
+      <div><h1>SplitTunnel <span id="ver" class="ver">…</span></h1>
+        <p class="sub">One app through your server</p></div>
     </div>
     <span id="pill" class="pill stopped">Stopped</span>
   </header>
 
   <main>
+    <div id="banner" class="banner hidden"></div>
     <!-- Signed out: the only thing to fill in is the server address. -->
     <section class="card" id="card-signin">
       <h2>Account</h2>
@@ -89,6 +91,12 @@
       <p>Pageant: <b id="pag">checking…</b></p>
       <p class="path">ssh: <span id="ssh">—</span></p>
       <p class="path">plink: <span id="plink">—</span></p>
+    </details>
+
+    <details class="card muted" id="card-log">
+      <summary>Log <span class="hint">— what the app is actually doing</span></summary>
+      <pre id="logbox" class="logbox"></pre>
+      <button id="copylog" class="link">Copy</button>
     </details>
 
     <p id="msg" class="msg"></p>

@@ -17,7 +17,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Where the identity provider lives. Baked into the *config*, never into the
 /// binary — the published build must contain no personal infrastructure.
+///
+/// `serde(default)` is required, not cosmetic: the UI sends `oidc: {}` before
+/// anything has been discovered, and a config written by an older build has no
+/// `scopes` key. Without it every save fails with "missing field".
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(default)]
 pub struct OidcSettings {
     /// e.g. https://auth.example.com/oidc
     pub issuer: String,

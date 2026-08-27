@@ -109,3 +109,21 @@ button.link:hover{color:var(--fg)}
    the green spinner both vanish on it. Keep the dark ink instead. */
 button.primary.busy{color:#04120d}
 button.primary .spin{border-color:rgba(0,0,0,.22);border-top-color:#04120d}
+
+/* ── Version, error banner, log ──────────────────────────────────────────
+   The app used to give no way to tell which build was running or what it had
+   just tried to do. Both are now on screen. */
+.ver{font-size:10.5px;font-weight:500;color:var(--dim);letter-spacing:0}
+.banner{
+  background:#1e1014;border:1px solid #3d1622;color:#ffb3c1;
+  border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.45;
+  margin-bottom:2px;-webkit-user-select:text;user-select:text;
+}
+.logbox{
+  margin:0 0 9px;padding:9px 10px;max-height:190px;overflow:auto;
+  background:#0b0f18;border:1px solid var(--line);border-radius:8px;
+  font:11px/1.5 ui-monospace,Consolas,monospace;color:#9fb0c8;
+  white-space:pre-wrap;word-break:break-word;
+  -webkit-user-select:text;user-select:text;
+}
+#card-log summary .hint{display:inline;margin:0;text-transform:none;letter-spacing:0}

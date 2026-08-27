@@ -195,6 +195,37 @@ fn check_server(app: State<App>, base: String) -> ServerProbe {
     }
 }
 
+/// Everything needed to diagnose "nothing happens when I press things"
+/// without asking the user to find a log file. Shown in the app's Log panel.
+#[tauri::command]
+fn diagnostics(app: State<App>) -> serde_json::Value {
+    let cfg = app.cfg.lock().unwrap().clone();
+    let ssh = tunnel::openssh_path();
+    let exists = |p: PathBuf| p.exists();
+    serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "config_dir": app.dir.display().to_string(),
+        "enroll_base": cfg.enroll_base,
+        "enroll_url": cfg.enroll_url(),
+        "discovery_url": cfg.discovery_url(),
+        "oidc_issuer": cfg.oidc.issuer,
+        "oidc_client_id": cfg.oidc.client_id,
+        "oidc_scopes": cfg.oidc.scopes,
+        "ssh_path": ssh.display().to_string(),
+        "ssh_found": ssh.exists(),
+        "have_key": exists(enroll::key_path(&app.dir)),
+        "have_cert": exists(enroll::cert_path(&app.dir)),
+        "have_known_hosts": exists(enroll::known_hosts_path(&app.dir)),
+        "have_tokens": Tokens::load(&app.dir).is_some(),
+        "enrollment": Enrollment::load(&app.dir),
+    })
+}
+
+#[tauri::command]
+fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 #[tauri::command]
 fn auth_state(app: State<App>) -> AuthState {
     app.auth.lock().unwrap().clone()
@@ -468,6 +499,8 @@ fn main() {
             autostart_enabled,
             discover,
             check_server,
+            diagnostics,
+            app_version,
             sign_in,
             cancel_sign_in,
             sign_out,
