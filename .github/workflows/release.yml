@@ -42,6 +42,25 @@ jobs:
             Write-Host "verified $t.exe"
           }
 
+      - name: Fetch and verify wstunnel
+        shell: pwsh
+        env:
+          WSTUNNEL_VERSION: "10.6.2"
+        run: |
+          $dir = "src-tauri/bin"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $tag = "v$env:WSTUNNEL_VERSION"
+          $file = "wstunnel_${env:WSTUNNEL_VERSION}_windows_amd64.tar.gz"
+          $url = "https://github.com/erebe/wstunnel/releases/download/$tag/$file"
+          Invoke-WebRequest $url -OutFile "$env:TEMP/$file"
+          tar -xzf "$env:TEMP/$file" -C $dir wstunnel.exe
+          if (-not (Test-Path "$dir/wstunnel.exe")) { throw "wstunnel.exe missing from $file" }
+          $v = & "$dir/wstunnel.exe" --version
+          if ($v -notmatch $env:WSTUNNEL_VERSION) {
+            throw "wstunnel reports '$v', expected $env:WSTUNNEL_VERSION"
+          }
+          Write-Host "verified $v"
+
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0" --locked
 
@@ -59,7 +78,7 @@ jobs:
           # -notlike/-notmatch on an array returns the filtered array rather than
           # a boolean, so the test would pass or fail almost at random.
           $list = (& 7z l $exe.FullName) -join "`n"
-          foreach ($t in @("plink.exe","pageant.exe")) {
+          foreach ($t in @("plink.exe","pageant.exe","wstunnel.exe")) {
             if ($list -notlike "*$t*") {
               Write-Host $list
               throw "$t is NOT bundled in the installer"
@@ -67,6 +86,10 @@ jobs:
             Write-Host "bundled: $t"
           }
 
+      # wstunnel carries SSH inside a WebSocket on 443, for networks that
+      # proxy HTTPS and drop direct TCP. Pinned and checksum-verified for the
+      # same reason as the PuTTY tools: a corrupted download must fail the
+      # build, not ship.
       - name: Collect installer
         shell: pwsh
         run: |

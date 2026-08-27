@@ -29,6 +29,10 @@ pub struct Supervisor {
     pub status: Arc<Mutex<Status>>,
     running: Arc<AtomicBool>,
     child: Arc<Mutex<Option<Child>>>,
+    /// The wstunnel process, when the relay is in use. Held separately because
+    /// it outlives individual ssh restarts — tearing the WebSocket down and
+    /// rebuilding it on every ssh retry would be slow and pointless.
+    relay_child: Arc<Mutex<Option<Child>>>,
 }
 
 #[cfg(windows)]
@@ -53,6 +57,99 @@ pub enum Transport {
     },
 }
 
+/// A wstunnel relay: carries the SSH connection inside a WebSocket on 443.
+///
+/// Needed because a managed network proxies HTTPS and drops direct TCP. A
+/// proxy will forward a WebSocket to 443; it will never forward raw SSH to
+/// 2223. The relay makes the transport look like ordinary web traffic.
+#[derive(Clone, Debug)]
+pub struct Relay {
+    pub exe: PathBuf,
+    /// e.g. wss://tunnel.example.com
+    pub ws_url: String,
+    pub path_prefix: String,
+    /// What the far end should connect to, e.g. "198.51.100.10:2223".
+    pub target: String,
+    /// Local port ssh will dial instead of the real server.
+    pub local_port: u16,
+    /// HTTP proxy to reach the relay through. Empty means direct.
+    pub proxy: String,
+}
+
+impl Relay {
+    /// Build a relay from the URL the server advertised.
+    ///
+    /// wstunnel wants the server origin and the path prefix as SEPARATE
+    /// arguments, so "wss://host/ws" has to be taken apart: passing the full
+    /// URL as the server address makes the handshake 404 at the reverse proxy.
+    pub fn new(exe: PathBuf, ws_url: &str, target: &str, local_port: u16, proxy: &str) -> Self {
+        let trimmed = ws_url.trim().trim_end_matches('/');
+        let (origin, prefix) = match trimmed.find("://") {
+            Some(i) => {
+                let (scheme, rest) = trimmed.split_at(i + 3);
+                match rest.find('/') {
+                    Some(j) => (
+                        format!("{scheme}{}", &rest[..j]),
+                        rest[j + 1..].trim_matches('/').to_string(),
+                    ),
+                    None => (trimmed.to_string(), String::new()),
+                }
+            }
+            None => (trimmed.to_string(), String::new()),
+        };
+        Self {
+            exe,
+            ws_url: origin,
+            path_prefix: if prefix.is_empty() { "ws".into() } else { prefix },
+            target: target.to_string(),
+            local_port,
+            proxy: proxy.to_string(),
+        }
+    }
+}
+
+fn spawn_relay(relay: &Relay) -> std::io::Result<Child> {
+    let mut cmd = Command::new(&relay.exe);
+    cmd.arg("client")
+        .arg("-L")
+        .arg(format!(
+            "tcp://127.0.0.1:{}:{}",
+            relay.local_port, relay.target
+        ))
+        .arg("-P")
+        .arg(&relay.path_prefix)
+        .arg("--log-lvl")
+        .arg("INFO");
+    if !relay.proxy.trim().is_empty() {
+        // wstunnel wants USER:PASS@HOST:PORT without a scheme.
+        let p = relay
+            .proxy
+            .trim()
+            .trim_start_matches("http://")
+            .trim_start_matches("https://");
+        cmd.arg("--http-proxy").arg(p);
+    }
+    cmd.arg(&relay.ws_url);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd.spawn()
+}
+
+/// Is a plain TCP connection to this endpoint possible? Decides whether the
+/// relay is needed at all.
+pub fn tcp_reachable(host: &str, port: u16, secs: u64) -> bool {
+    use std::net::ToSocketAddrs;
+    let Ok(addrs) = (host, port).to_socket_addrs() else {
+        return false;
+    };
+    addrs
+        .into_iter()
+        .any(|a| TcpStream::connect_timeout(&a, Duration::from_secs(secs)).is_ok())
+}
+
 /// Locate the OpenSSH client that ships with Windows.
 pub fn openssh_path() -> PathBuf {
     #[cfg(windows)]
@@ -66,16 +163,21 @@ pub fn openssh_path() -> PathBuf {
     PathBuf::from("ssh")
 }
 
-fn spawn(transport: &Transport, cfg: &Config) -> std::io::Result<Child> {
+fn spawn(
+    transport: &Transport,
+    cfg: &Config,
+    host: &str,
+    port: u16,
+) -> std::io::Result<Child> {
     let mut cmd = match transport {
         Transport::Plink { exe } => {
             let mut c = Command::new(exe);
             c.arg("-N")                             // no shell, forwarding only
                 .arg("-batch")                      // never prompt — we are headless
                 .arg("-ssh")
-                .arg("-P").arg(cfg.port.to_string())
+                .arg("-P").arg(port.to_string())
                 .arg("-D").arg(format!("127.0.0.1:{}", cfg.local_port))
-                .arg(format!("{}@{}", cfg.user, cfg.host));
+                .arg(format!("{}@{}", cfg.user, host));
             if !cfg.key_path.trim().is_empty() {
                 c.arg("-i").arg(&cfg.key_path);
             }
@@ -85,7 +187,7 @@ fn spawn(transport: &Transport, cfg: &Config) -> std::io::Result<Child> {
             let mut c = Command::new(exe);
             c.arg("-N")
                 .arg("-T")
-                .arg("-p").arg(cfg.port.to_string())
+                .arg("-p").arg(port.to_string())
                 .arg("-D").arg(format!("127.0.0.1:{}", cfg.local_port))
                 .arg("-i").arg(key)
                 // Offer ONLY this key. Without it ssh walks every key in the
@@ -99,7 +201,10 @@ fn spawn(transport: &Transport, cfg: &Config) -> std::io::Result<Child> {
                 .arg("-o").arg("ExitOnForwardFailure=yes")
                 .arg("-o").arg("ServerAliveInterval=30")
                 .arg("-o").arg("ServerAliveCountMax=3")
-                .arg("-o").arg(format!("UserKnownHostsFile={}", known_hosts.display()));
+                .arg("-o").arg(format!("UserKnownHostsFile={}", known_hosts.display()))
+                // The pinned key is stored under a fixed alias, so it matches
+                // whether we dial the server directly or 127.0.0.1 via the relay.
+                .arg("-o").arg(format!("HostKeyAlias={}", crate::enroll::HOST_ALIAS));
 
             // Pin the host key when the enrollment reply gave us one. If it
             // did not, `yes` would refuse to connect at all against an empty
@@ -111,7 +216,7 @@ fn spawn(transport: &Transport, cfg: &Config) -> std::io::Result<Child> {
                 "StrictHostKeyChecking=accept-new"
             });
 
-            c.arg(format!("{}@{}", cfg.user, cfg.host));
+            c.arg(format!("{}@{}", cfg.user, host));
             c
         }
     };
@@ -151,6 +256,7 @@ impl Supervisor {
             status: Arc::new(Mutex::new(Status::Stopped)),
             running: Arc::new(AtomicBool::new(false)),
             child: Arc::new(Mutex::new(None)),
+            relay_child: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -158,23 +264,72 @@ impl Supervisor {
         self.status.lock().map(|s| s.clone()).unwrap_or(Status::Stopped)
     }
 
-    pub fn start(&self, transport: Transport, cfg: Config) {
+    pub fn start(&self, transport: Transport, cfg: Config, relay: Option<Relay>) {
         if self.running.swap(true, Ordering::SeqCst) {
             return; // already supervising
         }
         let status = Arc::clone(&self.status);
         let running = Arc::clone(&self.running);
         let child_slot = Arc::clone(&self.child);
+        let relay_slot = Arc::clone(&self.relay_child);
 
         std::thread::spawn(move || {
             // Backoff matters: a hardened server will ban the client IP after a
             // handful of failed auths, and a tight retry loop looks exactly
             // like a brute-force attempt.
             let mut backoff = 5u64;
+
+            // Where ssh should actually dial. With a relay that is a local
+            // port; without one it is the server itself.
+            let (host, port) = match &relay {
+                Some(r) => ("127.0.0.1".to_string(), r.local_port),
+                None => (cfg.host.clone(), cfg.port),
+            };
+
             while running.load(Ordering::SeqCst) {
                 *status.lock().unwrap() = Status::Starting;
 
-                let mut child = match spawn(&transport, &cfg) {
+                // Bring the WebSocket up first, and only if it is not already
+                // running from a previous iteration.
+                if let Some(r) = &relay {
+                    let need = relay_slot
+                        .lock()
+                        .unwrap()
+                        .as_mut()
+                        .map(|c| matches!(c.try_wait(), Ok(Some(_))))
+                        .unwrap_or(true);
+                    if need {
+                        match spawn_relay(r) {
+                            Ok(c) => *relay_slot.lock().unwrap() = Some(c),
+                            Err(e) => {
+                                *status.lock().unwrap() =
+                                    Status::Error(format!("cannot start the relay: {e}"));
+                                running.store(false, Ordering::SeqCst);
+                                return;
+                            }
+                        }
+                        // Wait for its local listener before ssh dials it,
+                        // otherwise the first attempt always fails.
+                        let mut up = false;
+                        for _ in 0..30 {
+                            if !running.load(Ordering::SeqCst) {
+                                break;
+                            }
+                            if tcp_reachable("127.0.0.1", r.local_port, 1) {
+                                up = true;
+                                break;
+                            }
+                            std::thread::sleep(Duration::from_millis(400));
+                        }
+                        if !up {
+                            *status.lock().unwrap() = Status::Reconnecting(
+                                "the WebSocket relay did not come up".into(),
+                            );
+                        }
+                    }
+                }
+
+                let mut child = match spawn(&transport, &cfg, &host, port) {
                     Ok(c) => c,
                     Err(e) => {
                         let what = match &transport {
@@ -249,6 +404,10 @@ impl Supervisor {
                 }
                 backoff = (backoff * 2).min(60);
             }
+            if let Some(mut c) = relay_slot.lock().unwrap().take() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
             *status.lock().unwrap() = Status::Stopped;
         });
     }
@@ -256,6 +415,12 @@ impl Supervisor {
     pub fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
         if let Some(mut c) = self.child.lock().unwrap().take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        // The relay is a child process of ours; leaving it running would hold
+        // the local port and make the next start fail.
+        if let Some(mut c) = self.relay_child.lock().unwrap().take() {
             let _ = c.kill();
             let _ = c.wait();
         }

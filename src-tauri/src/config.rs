@@ -36,6 +36,15 @@ pub struct Config {
     /// the machine is configured by a PAC script, which cannot be read without
     /// a JavaScript engine.
     pub proxy: String,
+
+    /// How to reach the tunnel: "auto", "direct" or "relay".
+    ///
+    /// auto probes a direct TCP connection first and falls back to the
+    /// WebSocket relay. That ordering matters: direct is faster and has fewer
+    /// moving parts, so the relay should only be paid for when it is needed.
+    pub transport: String,
+    /// Local port the relay listens on for ssh to dial.
+    pub relay_port: u16,
 }
 
 impl Default for Config {
@@ -51,6 +60,8 @@ impl Default for Config {
             enroll_base: String::new(),
             oidc: OidcSettings::default(),
             proxy: String::new(),
+            transport: "auto".into(),
+            relay_port: 12223,
         }
     }
 }

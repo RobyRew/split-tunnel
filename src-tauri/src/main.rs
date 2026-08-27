@@ -230,6 +230,8 @@ fn diagnostics(app: State<App>) -> serde_json::Value {
         "oidc_scopes": cfg.oidc.scopes,
         "proxy": net::detect_for(&cfg.proxy, &cfg.discovery_url()).describe(),
         "proxy_setting": cfg.proxy,
+        "transport_mode": cfg.transport,
+        "relay_port": cfg.relay_port,
         "ssh_path": ssh.display().to_string(),
         "ssh_found": ssh.exists(),
         "have_key": exists(enroll::key_path(&app.dir)),
@@ -410,6 +412,7 @@ fn start_tunnel(app: State<App>) -> Result<(), String> {
         None => None,
     };
 
+    let mut relay: Option<tunnel::Relay> = None;
     let transport = if let Some(rec) = record {
         // The server told us where to connect; that beats anything typed in.
         cfg.host = rec.host.clone();
@@ -423,6 +426,37 @@ fn start_tunnel(app: State<App>) -> Result<(), String> {
             let _ = guard.save(&app.dir);
         }
         let exe = tunnel::openssh_path();
+
+        // Decide direct vs relay. "auto" probes a direct connection, because
+        // it is faster and simpler when it works; the relay exists for the
+        // networks where it does not.
+        let want_relay = match cfg.transport.as_str() {
+            "relay" => true,
+            "direct" => false,
+            _ => !tunnel::tcp_reachable(&rec.host, rec.port, 5),
+        };
+        if want_relay && !rec.ws_url.is_empty() {
+            let ws_exe = pageant::resolve_tool(&app.bundled_bin, "wstunnel.exe");
+            if !ws_exe.exists() {
+                return Err(format!(
+                    "the server is only reachable through the WebSocket relay, \
+                     but wstunnel was not found at {}",
+                    ws_exe.display()
+                ));
+            }
+            relay = Some(tunnel::Relay::new(
+                ws_exe,
+                &rec.ws_url,
+                &rec.ws_target,
+                cfg.relay_port,
+                &net::detect_for(&cfg.proxy, &rec.ws_url).url,
+            ));
+        } else if want_relay {
+            return Err("Cannot reach the tunnel server, and it offers no \
+                        WebSocket relay to fall back to."
+                .into());
+        }
+
         Transport::OpenSsh {
             exe,
             key: enroll::key_path(&app.dir),
@@ -444,7 +478,7 @@ fn start_tunnel(app: State<App>) -> Result<(), String> {
         Transport::Plink { exe: plink }
     };
 
-    app.sup.start(transport, cfg.clone());
+    app.sup.start(transport, cfg.clone(), relay);
 
     if cfg.manage_spotify {
         let _ = spotify::apply(cfg.local_port);

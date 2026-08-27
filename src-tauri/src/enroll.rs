@@ -28,6 +28,10 @@ pub struct Enrollment {
     /// Unix seconds at which the certificate stops being accepted.
     pub expires_at: u64,
     pub serial: u64,
+    /// WebSocket relay, when the server offers one. Lets the tunnel survive a
+    /// network that proxies HTTPS and drops direct TCP to the tunnel port.
+    pub ws_url: String,
+    pub ws_target: String,
 }
 
 impl Enrollment {
@@ -63,6 +67,10 @@ pub fn cert_path(dir: &Path) -> PathBuf {
 pub fn known_hosts_path(dir: &Path) -> PathBuf {
     dir.join("known_hosts")
 }
+
+/// The name the server's host key is pinned under. Constant so that the entry
+/// matches whether we connect directly or through the relay.
+pub const HOST_ALIAS: &str = "splittunnel-server";
 
 fn now() -> u64 {
     SystemTime::now()
@@ -192,13 +200,13 @@ pub fn enroll(
     let host = s(&tunnel, "host");
     let port = tunnel.get("port").and_then(|p| p.as_u64()).unwrap_or(2223) as u16;
     let host_key = s(&tunnel, "host_key");
-    if !host_key.is_empty() && !host.is_empty() {
-        let entry = if port == 22 {
-            format!("{host} {host_key}\n")
-        } else {
-            format!("[{host}]:{port} {host_key}\n")
-        };
-        std::fs::write(known_hosts_path(dir), entry).map_err(|e| e.to_string())?;
+    if !host_key.is_empty() {
+        // Recorded under a FIXED alias rather than host:port. Through the
+        // WebSocket relay ssh dials 127.0.0.1 on an arbitrary local port, and
+        // a host:port-keyed entry would never match; `HostKeyAlias` makes the
+        // same pinned key valid on both paths.
+        std::fs::write(known_hosts_path(dir), format!("{HOST_ALIAS} {host_key}\n"))
+            .map_err(|e| e.to_string())?;
     }
 
     let record = Enrollment {
@@ -210,6 +218,8 @@ pub fn enroll(
             if u.is_empty() { "tunnel".into() } else { u }
         },
         host_fingerprint: s(&tunnel, "host_fingerprint"),
+        ws_url: s(&tunnel, "ws_url"),
+        ws_target: s(&tunnel, "ws_target"),
         expires_at: value
             .get("expires_at")
             .and_then(|x| x.as_u64())

@@ -58,6 +58,13 @@ API_RESOURCE = CFG["api_resource"]
 REQUIRED_SCOPE = CFG.get("required_scope", "tunnel:connect")
 ALLOWED_EMAILS = {e.strip().lower() for e in CFG.get("allowed_emails", []) if e.strip()}
 REQUIRE_VERIFIED_EMAIL = bool(CFG.get("require_verified_email", True))
+# Whether an email is REQUIRED to enrol. Logto grants user scopes per
+# application; until this app may request `email`, the id token carries none
+# and the allowlist cannot be applied. With this false the Logto role is the
+# only gate — sound, since the scope only reaches users holding the role — and
+# certificates are identified by Logto user id instead.
+REQUIRE_EMAIL = bool(CFG.get("require_email", True))
+CLIENT_SCOPES = CFG.get("client_scopes", "openid offline_access email")
 ALGORITHMS = CFG.get("algorithms", ["ES384", "ES256", "RS256"])
 
 CA_KEY = CFG.get("ca_key", "/ca/tunnel_ca")
@@ -70,6 +77,12 @@ TUNNEL_PORT = int(CFG.get("tunnel_port", 2223))
 TUNNEL_USER = CFG.get("tunnel_user", "tunnel")
 HOST_KEY = CFG.get("host_key", "")           # "ssh-ed25519 AAAA..." for known_hosts
 HOST_FINGERPRINT = CFG.get("host_fingerprint", "")
+
+# WebSocket relay. Advertised to the client so it can fall back to carrying
+# SSH inside WSS on 443 when a direct connection to the tunnel port is dropped
+# — the normal case on a managed network that proxies HTTPS.
+WS_URL = CFG.get("ws_url", "")
+WS_TARGET = CFG.get("ws_target", "")
 
 RATE_LIMIT = int(CFG.get("rate_limit_per_hour", 20))
 MAX_BODY = 8 * 1024
@@ -277,7 +290,12 @@ def client_config():
         "client_id": CLIENT_ID,
         "resource": API_RESOURCE,
         "scope": REQUIRED_SCOPE,
+        # The exact scope string the client should request. Server-driven so
+        # that what Logto permits can change without rebuilding the client.
+        "scopes": f"{CLIENT_SCOPES} {REQUIRED_SCOPE}".strip(),
         "cert_ttl": CERT_TTL,
+        "ws_url": WS_URL,
+        "ws_target": WS_TARGET,
     })
 
 
@@ -314,30 +332,40 @@ def enroll():
         raise Denied("id token and access token belong to different users", 401)
 
     email = (identity.get("email") or "").strip().lower()
-    if not email:
+    if email:
+        # An email is present, so hold it to the full standard regardless of
+        # REQUIRE_EMAIL — a claim we can check is a claim we should check.
+        if REQUIRE_VERIFIED_EMAIL and not identity.get("email_verified", False):
+            raise Denied(f"email {email} is not verified in Logto", 403)
+        if ALLOWED_EMAILS and email not in ALLOWED_EMAILS:
+            raise Denied(f"{email} is not on the tunnel allowlist", 403)
+        who = email
+    elif REQUIRE_EMAIL:
         raise Denied(
-            "no email in the id token — request the 'email' scope at sign-in",
+            "no email in the id token. Either grant this application the "
+            "'email' scope in Logto, or set require_email=false to gate on "
+            "the role alone.",
             403,
         )
-    if REQUIRE_VERIFIED_EMAIL and not identity.get("email_verified", False):
-        raise Denied(f"email {email} is not verified in Logto", 403)
-    if ALLOWED_EMAILS and email not in ALLOWED_EMAILS:
-        raise Denied(f"{email} is not on the tunnel allowlist", 403)
+    else:
+        # Role-only gating. The certificate is identified by Logto user id, so
+        # the audit trail still names exactly one account per session.
+        who = f"logto:{access['sub']}"
 
     _rate_limit(access["sub"])
 
-    certificate, serial = sign_certificate(public_key, email)
+    certificate, serial = sign_certificate(public_key, who)
     expires_at = int(time.time()) + _ttl_seconds(CERT_TTL)
 
     log.info(
         "issued cert serial=%s id=%s sub=%s expires_in=%s",
-        serial, email, access["sub"], CERT_TTL,
+        serial, who, access["sub"], CERT_TTL,
     )
 
     return jsonify({
         "certificate": certificate,
         "serial": serial,
-        "identity": email,
+        "identity": who,
         "principal": PRINCIPAL,
         "expires_at": expires_at,
         # Everything the client needs to connect, so a new user configures
@@ -348,6 +376,9 @@ def enroll():
             "user": TUNNEL_USER,
             "host_key": HOST_KEY,
             "host_fingerprint": HOST_FINGERPRINT,
+            # Where to relay through when a direct connection is impossible.
+            "ws_url": WS_URL,
+            "ws_target": WS_TARGET,
         },
     })
 
