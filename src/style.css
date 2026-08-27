@@ -50,3 +50,23 @@ button{
 button:hover{border-color:#334054}
 button.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#04120d}
 button.primary.on{background:#1a212c;color:var(--fg);border:1px solid var(--line)}
+
+/* ── Account / sign-in ──────────────────────────────────────────────── */
+.hidden{display:none}
+button.wide{width:100%;flex:none;margin-top:4px}
+.who{margin:0 0 4px;font-size:14px}
+.code{
+  font:600 22px/1.2 ui-monospace,Consolas,monospace;letter-spacing:.16em;
+  text-align:center;padding:14px;margin:10px 0;color:var(--accent);
+  background:#0f1420;border:1px dashed #2b3a4d;border-radius:10px;
+  -webkit-user-select:text;user-select:text;
+}
+details.card > summary{
+  font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);
+  cursor:pointer;list-style:none;
+}
+details.card > summary::-webkit-details-marker{display:none}
+details.card > summary::after{content:" ▸";color:var(--dim)}
+details.card[open] > summary::after{content:" ▾"}
+details.card[open] > summary{margin-bottom:10px}
+details.card > *:not(summary){margin-top:0}

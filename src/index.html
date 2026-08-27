@@ -24,15 +24,34 @@
   </header>
 
   <main>
-    <section class="card">
-      <h2>Server</h2>
-      <label>Host <input id="host" placeholder="vps.example.com or IP" autocomplete="off" spellcheck="false" /></label>
+    <!-- Signed out: the only thing to fill in is the server address. -->
+    <section class="card" id="card-signin">
+      <h2>Account</h2>
+      <label>Tunnel server
+        <input id="base" placeholder="tunnel.example.com" autocomplete="off" spellcheck="false" /></label>
+      <p class="hint">Sign in with the account your administrator authorised. Your key is
+        created on this PC and never leaves it.</p>
+      <button id="signin" class="primary wide">Sign in</button>
+    </section>
+
+    <!-- Waiting for the browser half of the device flow. -->
+    <section class="card hidden" id="card-waiting">
+      <h2>Finish in your browser</h2>
+      <p class="hint">A browser window should have opened. If it did not, go to
+        <span class="path" id="vuri">—</span> and enter this code:</p>
+      <div class="code" id="ucode">—</div>
+      <button id="cancel" class="wide">Cancel</button>
+    </section>
+
+    <!-- Signed in: identity and certificate life. -->
+    <section class="card hidden" id="card-account">
+      <h2>Account</h2>
+      <p class="who"><b id="who">—</b></p>
+      <p class="hint" id="certinfo">—</p>
       <div class="row">
-        <label class="grow">User <input id="user" placeholder="tunnel" autocomplete="off" spellcheck="false" /></label>
-        <label class="narrow">Port <input id="port" type="number" min="1" max="65535" /></label>
+        <button id="renew">Renew now</button>
+        <button id="signout">Sign out</button>
       </div>
-      <label>Private key (.ppk) — leave empty to use a key already in Pageant
-        <input id="key" placeholder="C:\Users\you\keys\tunnel.ppk" autocomplete="off" spellcheck="false" /></label>
     </section>
 
     <section class="card">
@@ -47,11 +66,25 @@
       <label class="check"><input type="checkbox" id="spot" /> <span>Manage Spotify's proxy setting <em>(experimental — backs up prefs)</em></span></label>
     </section>
 
-    <section class="card muted">
-      <h2>Environment</h2>
+    <details class="card">
+      <summary>Manual setup (no account)</summary>
+      <p class="hint">Only needed if you were given an SSH key instead of a login.
+        Anything set here is ignored while you are signed in.</p>
+      <label>Host <input id="host" placeholder="vps.example.com or IP" autocomplete="off" spellcheck="false" /></label>
+      <div class="row">
+        <label class="grow">User <input id="user" placeholder="tunnel" autocomplete="off" spellcheck="false" /></label>
+        <label class="narrow">Port <input id="port" type="number" min="1" max="65535" /></label>
+      </div>
+      <label>Private key (.ppk) — leave empty to use a key already in Pageant
+        <input id="key" placeholder="C:\Users\you\keys\tunnel.ppk" autocomplete="off" spellcheck="false" /></label>
+    </details>
+
+    <details class="card muted">
+      <summary>Environment</summary>
       <p>Pageant: <b id="pag">checking…</b></p>
+      <p class="path">ssh: <span id="ssh">—</span></p>
       <p class="path">plink: <span id="plink">—</span></p>
-    </section>
+    </details>
 
     <p id="msg" class="msg"></p>
   </main>

@@ -1,25 +1,46 @@
 // Windows GUI app: no console window on launch.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod auth;
 mod autostart;
 mod config;
+mod enroll;
 mod pageant;
 mod spotify;
 mod tunnel;
 
+use auth::{DevicePrompt, OidcSettings, Tokens};
 use config::Config;
+use enroll::Enrollment;
+use serde::Serialize;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, State, WindowEvent};
-use tunnel::{Status, Supervisor};
+use tunnel::{Status, Supervisor, Transport};
+
+/// Where the sign-in has got to. The UI polls this rather than waiting on a
+/// command, because the device flow can legitimately take minutes — the user
+/// has to go and log in — and a blocked command would freeze the window.
+#[derive(Serialize, Clone, Debug)]
+#[serde(tag = "state", content = "detail")]
+enum AuthState {
+    SignedOut,
+    Waiting(DevicePrompt),
+    Enrolling,
+    SignedIn { email: String, expires_at: u64 },
+    Failed(String),
+}
 
 struct App {
     sup: Supervisor,
     dir: PathBuf,
     bundled_bin: PathBuf,
     cfg: Mutex<Config>,
+    auth: Arc<Mutex<AuthState>>,
+    cancel_signin: Arc<AtomicBool>,
 }
 
 #[tauri::command]
@@ -44,35 +65,210 @@ fn pageant_running() -> bool {
     pageant::is_running()
 }
 
-/// Which plink will actually be used — surfaced in the UI so it is obvious
-/// whether the user's own PuTTY or the bundled copy is in play.
+/// Which SSH tools will actually be used — surfaced in the UI so it is obvious
+/// whether the user's own PuTTY, the bundled copy, or Windows' own OpenSSH is
+/// in play.
 #[tauri::command]
 fn tool_paths(app: State<App>) -> serde_json::Value {
+    let ssh = tunnel::openssh_path();
     serde_json::json!({
         "plink": pageant::resolve_tool(&app.bundled_bin, "plink.exe").display().to_string(),
         "pageant": pageant::resolve_tool(&app.bundled_bin, "pageant.exe").display().to_string(),
+        "ssh": ssh.display().to_string(),
+        "ssh_available": ssh.exists() || ssh == PathBuf::from("ssh"),
     })
 }
 
+// ── Sign-in ───────────────────────────────────────────────────────────────
+
+/// Ask the enrollment service which identity provider to use.
+///
+/// This is what lets a new user type one URL instead of four fields. None of
+/// it is secret: a public OAuth client holds no secret by design.
+#[tauri::command]
+fn discover(app: State<App>, base: String) -> Result<OidcSettings, String> {
+    let mut cfg = app.cfg.lock().unwrap().clone();
+    cfg.enroll_base = base.trim().to_string();
+    let url = cfg.discovery_url();
+    if url.is_empty() {
+        return Err("Enter the tunnel server address first.".into());
+    }
+
+    let v: serde_json::Value = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(20))
+        .call()
+        .map_err(|e| format!("cannot reach {url}: {e}"))?
+        .into_json()
+        .map_err(|e| format!("bad response from {url}: {e}"))?;
+
+    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let settings = OidcSettings {
+        issuer: s("issuer"),
+        client_id: s("client_id"),
+        resource: s("resource"),
+        scope: s("scope"),
+    };
+    if !settings.is_complete() {
+        return Err("That server did not return a usable sign-in configuration.".into());
+    }
+
+    cfg.oidc = settings.clone();
+    cfg.save(&app.dir)?;
+    *app.cfg.lock().unwrap() = cfg;
+    Ok(settings)
+}
+
+#[tauri::command]
+fn auth_state(app: State<App>) -> AuthState {
+    app.auth.lock().unwrap().clone()
+}
+
+/// Start a device-flow sign-in, then enrol, all on a background thread.
+#[tauri::command]
+fn sign_in(app: State<App>) -> Result<DevicePrompt, String> {
+    let cfg = app.cfg.lock().unwrap().clone();
+    if !cfg.oidc.is_complete() {
+        return Err("Enter the tunnel server address and press Connect account first.".into());
+    }
+
+    let prompt = auth::begin(&cfg.oidc)?;
+    // Send them straight to the pre-filled page. The code stays on screen for
+    // the case where the browser opens somewhere unexpected.
+    auth::open_in_browser(&prompt.verification_uri_complete);
+
+    *app.auth.lock().unwrap() = AuthState::Waiting(prompt.clone());
+    app.cancel_signin.store(false, Ordering::SeqCst);
+
+    let state = Arc::clone(&app.auth);
+    let cancel = Arc::clone(&app.cancel_signin);
+    let dir = app.dir.clone();
+    let p = prompt.clone();
+
+    std::thread::spawn(move || {
+        let cancelled = || cancel.load(Ordering::SeqCst);
+        let tokens = match auth::poll(&cfg.oidc, &p, &cancelled) {
+            Ok(t) => t,
+            Err(e) => {
+                *state.lock().unwrap() = AuthState::Failed(e);
+                return;
+            }
+        };
+        if let Err(e) = tokens.save(&dir) {
+            *state.lock().unwrap() = AuthState::Failed(e);
+            return;
+        }
+
+        *state.lock().unwrap() = AuthState::Enrolling;
+        match enroll::enroll(&dir, &cfg.enroll_url(), &tokens) {
+            Ok(rec) => {
+                *state.lock().unwrap() = AuthState::SignedIn {
+                    email: if rec.identity.is_empty() { tokens.email.clone() } else { rec.identity.clone() },
+                    expires_at: rec.expires_at,
+                }
+            }
+            Err(e) => *state.lock().unwrap() = AuthState::Failed(e),
+        }
+    });
+
+    Ok(prompt)
+}
+
+#[tauri::command]
+fn cancel_sign_in(app: State<App>) {
+    app.cancel_signin.store(true, Ordering::SeqCst);
+    *app.auth.lock().unwrap() = AuthState::SignedOut;
+}
+
+#[tauri::command]
+fn sign_out(app: State<App>) {
+    app.cancel_signin.store(true, Ordering::SeqCst);
+    app.sup.stop();
+    Tokens::forget(&app.dir);
+    enroll::clear(&app.dir);
+    *app.auth.lock().unwrap() = AuthState::SignedOut;
+}
+
+#[tauri::command]
+fn enrollment(app: State<App>) -> Option<Enrollment> {
+    Enrollment::load(&app.dir)
+}
+
+/// Renew the certificate without user interaction, using the stored refresh
+/// token. Returns false when the user genuinely has to sign in again.
+fn renew_quietly(dir: &PathBuf, cfg: &Config) -> Result<Enrollment, String> {
+    let stored = Tokens::load(dir).ok_or("not signed in")?;
+    if stored.refresh_token.is_empty() {
+        return Err("no refresh token — sign in again".into());
+    }
+    let fresh = auth::refresh(&cfg.oidc, &stored.refresh_token)?;
+    fresh.save(dir)?;
+    enroll::enroll(dir, &cfg.enroll_url(), &fresh)
+}
+
+#[tauri::command]
+fn renew(app: State<App>) -> Result<Enrollment, String> {
+    let cfg = app.cfg.lock().unwrap().clone();
+    renew_quietly(&app.dir, &cfg)
+}
+
+// ── Tunnel ────────────────────────────────────────────────────────────────
+
 #[tauri::command]
 fn start_tunnel(app: State<App>) -> Result<(), String> {
-    let cfg = app.cfg.lock().unwrap().clone();
-    if !cfg.is_complete() {
-        return Err("Set the server host, port and username first.".into());
-    }
+    let mut cfg = app.cfg.lock().unwrap().clone();
 
-    // Reuse the user's Pageant when it is already up — they may well have other
-    // tunnels loaded in it. Only fall back to the bundled agent otherwise.
-    if !pageant::is_running() && !cfg.key_path.trim().is_empty() {
-        let ag = pageant::resolve_tool(&app.bundled_bin, "pageant.exe");
-        let _ = pageant::start(&ag, Some(std::path::Path::new(&cfg.key_path)));
-    }
+    // Prefer a certificate whenever one exists. Renew it first if it is close
+    // to expiring, so the tunnel does not die twenty minutes from now.
+    let record = match Enrollment::load(&app.dir) {
+        Some(r) if r.is_valid() && !r.needs_renewal() => Some(r),
+        Some(r) => match renew_quietly(&app.dir, &cfg) {
+            Ok(fresh) => Some(fresh),
+            // A renewal failure on a still-valid certificate is not fatal —
+            // connect on what we have and let the user re-authenticate later.
+            Err(e) if r.is_valid() => {
+                *app.auth.lock().unwrap() = AuthState::Failed(format!("renewal failed: {e}"));
+                Some(r)
+            }
+            Err(e) => return Err(format!("certificate expired and renewal failed: {e}")),
+        },
+        None => None,
+    };
 
-    let plink = pageant::resolve_tool(&app.bundled_bin, "plink.exe");
-    if !plink.exists() {
-        return Err(format!("plink not found at {}", plink.display()));
-    }
-    app.sup.start(plink, cfg.clone());
+    let transport = if let Some(rec) = record {
+        // The server told us where to connect; that beats anything typed in.
+        cfg.host = rec.host.clone();
+        cfg.port = rec.port;
+        cfg.user = rec.user.clone();
+        {
+            let mut guard = app.cfg.lock().unwrap();
+            guard.host = cfg.host.clone();
+            guard.port = cfg.port;
+            guard.user = cfg.user.clone();
+            let _ = guard.save(&app.dir);
+        }
+        let exe = tunnel::openssh_path();
+        Transport::OpenSsh {
+            exe,
+            key: enroll::key_path(&app.dir),
+            known_hosts: enroll::known_hosts_path(&app.dir),
+        }
+    } else {
+        // Manual path, unchanged: bring your own key and let Pageant hold it.
+        if !cfg.is_complete() {
+            return Err("Sign in, or set the server host, port and username.".into());
+        }
+        if !pageant::is_running() && !cfg.key_path.trim().is_empty() {
+            let ag = pageant::resolve_tool(&app.bundled_bin, "pageant.exe");
+            let _ = pageant::start(&ag, Some(std::path::Path::new(&cfg.key_path)));
+        }
+        let plink = pageant::resolve_tool(&app.bundled_bin, "plink.exe");
+        if !plink.exists() {
+            return Err(format!("plink not found at {}", plink.display()));
+        }
+        Transport::Plink { exe: plink }
+    };
+
+    app.sup.start(transport, cfg.clone());
 
     if cfg.manage_spotify {
         let _ = spotify::apply(cfg.local_port);
@@ -123,11 +319,24 @@ fn main() {
                 .map(|r| r.join("bin"))
                 .unwrap_or_else(|_| PathBuf::from("bin"));
             let cfg = Config::load(&dir);
+
+            // Reflect any certificate already on disk, so a restart does not
+            // present a signed-in user with a "Sign in" button.
+            let initial = match Enrollment::load(&dir) {
+                Some(r) if r.is_valid() => AuthState::SignedIn {
+                    email: r.identity.clone(),
+                    expires_at: r.expires_at,
+                },
+                _ => AuthState::SignedOut,
+            };
+
             app.manage(App {
                 sup: Supervisor::new(),
                 dir,
                 bundled_bin,
                 cfg: Mutex::new(cfg),
+                auth: Arc::new(Mutex::new(initial)),
+                cancel_signin: Arc::new(AtomicBool::new(false)),
             });
 
             // A tunnel is a background job: closing the window must not kill it.
@@ -179,7 +388,14 @@ fn main() {
             pageant_running,
             tool_paths,
             set_autostart,
-            autostart_enabled
+            autostart_enabled,
+            discover,
+            sign_in,
+            cancel_sign_in,
+            sign_out,
+            auth_state,
+            enrollment,
+            renew
         ])
         .run(tauri::generate_context!())
         .expect("failed to start SplitTunnel");

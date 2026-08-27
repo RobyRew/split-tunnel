@@ -1,0 +1,4 @@
+# Never commit the CA private key, the live config, or issued-serial state.
+ca/
+config/
+state/

@@ -58,6 +58,40 @@ key fingerprint per session, so activity stays attributable.
 
 ---
 
+## Optional: sign-in instead of key files
+
+Everything above hands out access by copying a `.pub` into `pubkeys/`. That is
+fine for one or two people. For a larger or less-trusted group, `enroll/` adds
+an alternative: the user signs in to **your** identity provider (any OIDC one —
+Logto, Keycloak, Authentik, Auth0) and the server signs a **12-hour SSH
+certificate** for a key generated on their machine.
+
+```
+sign in (browser) ──▶ enroll service verifies the login
+                      ssh-keygen -s CA ──▶ short-lived certificate
+                                           │
+sshd TrustedUserCAKeys ◀───────────────────┘   (no authorized_keys entry at all)
+```
+
+What it buys you:
+
+| | `pubkeys/` | certificates |
+|---|---|---|
+| Onboarding | they send a key, you redeploy | they sign in |
+| Expiry | never | built in, enforced by sshd |
+| Audit | every key looks alike | sshd logs *which identity* opened each session |
+| Revoking | delete the file, restart | remove their role at the IdP |
+
+Requirements: an OIDC provider that supports the **device authorization grant**
+(RFC 8628), and a TLS-terminating reverse proxy in front of the service.
+
+Setup is in [`enroll/docker-compose.yml`](enroll/docker-compose.yml); the
+certificate is signed `-O clear -O permit-port-forwarding`, so it carries no
+pty, no agent forwarding and no X11 — it forwards TCP and nothing else.
+
+The `pubkeys/` route keeps working alongside it, and is worth keeping as the
+break-glass path for when your identity provider is the thing that is down.
+
 ## Optional: restrict the tunnel to specific destinations
 
 **Disabled by default.** When enabled, the tunnel user may only reach the

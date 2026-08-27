@@ -141,16 +141,31 @@ auto-start**, and consider adding your IP to `ignoreip`.
 
 ## 2. Install the app
 
-1. Download `SplitTunnel_x.y.z_x64-setup.exe` from
-   [Releases](../../releases) and run it.
-2. Fill in **Host**, **Port**, **User**.
-3. Either leave **Private key** empty (uses a key already in Pageant) or point
+Download `SplitTunnel_x.y.z_x64-setup.exe` from [Releases](../../releases) and
+run it. There are two ways to get access, and the app supports both.
+
+### With a sign-in (if your server runs the enrollment service)
+
+1. Type the **tunnel server** address, e.g. `tunnel.example.com`.
+2. **Sign in.** A browser opens; log in with the account you were authorised
+   with. If it does not open, the app shows a code and a URL to enter it at.
+3. That is all. The app generates its own key, receives a short-lived
+   certificate, and fills in the host, port, username and host key for you.
+
+Your private key is created on your PC and never leaves it — only the public
+half is sent. Access renews itself silently and expires on its own.
+
+### With a key file
+
+1. Fill in **Host**, **Port**, **User** under *Manual setup*.
+2. Either leave **Private key** empty (uses a key already in Pageant) or point
    it at your `.ppk`.
-4. **Connect.** The pill turns green once a real SOCKS5 handshake succeeds —
-   not merely when the process starts.
 
 Convert an OpenSSH key to `.ppk` with PuTTYgen: *Conversions → Import key →
 Save private key*.
+
+Either way: **Connect.** The pill turns green once a real SOCKS5 handshake
+succeeds — not merely when the process starts.
 
 ## 3. Point Spotify at it
 

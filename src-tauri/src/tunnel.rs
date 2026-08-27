@@ -34,17 +34,87 @@ pub struct Supervisor {
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-fn spawn_plink(plink: &PathBuf, cfg: &Config) -> std::io::Result<Child> {
-    let mut cmd = Command::new(plink);
-    cmd.arg("-N")                                   // no shell, forwarding only
-        .arg("-batch")                              // never prompt — we are headless
-        .arg("-ssh")
-        .arg("-P").arg(cfg.port.to_string())
-        .arg("-D").arg(format!("127.0.0.1:{}", cfg.local_port))
-        .arg(format!("{}@{}", cfg.user, cfg.host));
-    if !cfg.key_path.trim().is_empty() {
-        cmd.arg("-i").arg(&cfg.key_path);
+/// Which SSH client carries the tunnel.
+///
+/// Certificates use Windows' own OpenSSH rather than plink for a concrete
+/// reason: plink reads keys only in PuTTY's `.ppk` format, so the certificate
+/// path would need a PPK serialiser here for no benefit. OpenSSH ships in
+/// Windows 10 1809 and later, understands certificates natively, and finds
+/// `<key>-cert.pub` on its own.
+#[derive(Clone, Debug)]
+pub enum Transport {
+    /// Manual key, via bundled or installed PuTTY. Uses Pageant when loaded.
+    Plink { exe: PathBuf },
+    /// Certificate issued by the enrollment service.
+    OpenSsh {
+        exe: PathBuf,
+        key: PathBuf,
+        known_hosts: PathBuf,
+    },
+}
+
+/// Locate the OpenSSH client that ships with Windows.
+pub fn openssh_path() -> PathBuf {
+    #[cfg(windows)]
+    {
+        let root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
+        let p = PathBuf::from(&root).join("System32\\OpenSSH\\ssh.exe");
+        if p.exists() {
+            return p;
+        }
     }
+    PathBuf::from("ssh")
+}
+
+fn spawn(transport: &Transport, cfg: &Config) -> std::io::Result<Child> {
+    let mut cmd = match transport {
+        Transport::Plink { exe } => {
+            let mut c = Command::new(exe);
+            c.arg("-N")                             // no shell, forwarding only
+                .arg("-batch")                      // never prompt — we are headless
+                .arg("-ssh")
+                .arg("-P").arg(cfg.port.to_string())
+                .arg("-D").arg(format!("127.0.0.1:{}", cfg.local_port))
+                .arg(format!("{}@{}", cfg.user, cfg.host));
+            if !cfg.key_path.trim().is_empty() {
+                c.arg("-i").arg(&cfg.key_path);
+            }
+            c
+        }
+        Transport::OpenSsh { exe, key, known_hosts } => {
+            let mut c = Command::new(exe);
+            c.arg("-N")
+                .arg("-T")
+                .arg("-p").arg(cfg.port.to_string())
+                .arg("-D").arg(format!("127.0.0.1:{}", cfg.local_port))
+                .arg("-i").arg(key)
+                // Offer ONLY this key. Without it ssh walks every key in the
+                // agent and in ~/.ssh first, and the server's MaxAuthTries 3
+                // disconnects before our certificate is ever tried.
+                .arg("-o").arg("IdentitiesOnly=yes")
+                .arg("-o").arg("IdentityAgent=none")
+                .arg("-o").arg("BatchMode=yes")
+                // Fail loudly if the forward cannot be established, instead of
+                // sitting there connected with a dead SOCKS port.
+                .arg("-o").arg("ExitOnForwardFailure=yes")
+                .arg("-o").arg("ServerAliveInterval=30")
+                .arg("-o").arg("ServerAliveCountMax=3")
+                .arg("-o").arg(format!("UserKnownHostsFile={}", known_hosts.display()));
+
+            // Pin the host key when the enrollment reply gave us one. If it
+            // did not, `yes` would refuse to connect at all against an empty
+            // known_hosts — so fall back to recording it on first use rather
+            // than shipping a client that cannot connect.
+            c.arg("-o").arg(if known_hosts.exists() {
+                "StrictHostKeyChecking=yes"
+            } else {
+                "StrictHostKeyChecking=accept-new"
+            });
+
+            c.arg(format!("{}@{}", cfg.user, cfg.host));
+            c
+        }
+    };
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -88,7 +158,7 @@ impl Supervisor {
         self.status.lock().map(|s| s.clone()).unwrap_or(Status::Stopped)
     }
 
-    pub fn start(&self, plink: PathBuf, cfg: Config) {
+    pub fn start(&self, transport: Transport, cfg: Config) {
         if self.running.swap(true, Ordering::SeqCst) {
             return; // already supervising
         }
@@ -104,10 +174,15 @@ impl Supervisor {
             while running.load(Ordering::SeqCst) {
                 *status.lock().unwrap() = Status::Starting;
 
-                let mut child = match spawn_plink(&plink, &cfg) {
+                let mut child = match spawn(&transport, &cfg) {
                     Ok(c) => c,
                     Err(e) => {
-                        *status.lock().unwrap() = Status::Error(format!("cannot start plink: {e}"));
+                        let what = match &transport {
+                            Transport::Plink { .. } => "plink",
+                            Transport::OpenSsh { .. } => "ssh",
+                        };
+                        *status.lock().unwrap() =
+                            Status::Error(format!("cannot start {what}: {e}"));
                         running.store(false, Ordering::SeqCst);
                         return;
                     }

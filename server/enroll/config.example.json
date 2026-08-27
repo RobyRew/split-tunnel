@@ -1,0 +1,28 @@
+{
+  "_comment": "Copy to config/config.json and fill in. Nothing here is secret.",
+
+  "issuer":         "https://auth.example.com/oidc",
+  "jwks_uri":       "https://auth.example.com/oidc/jwks",
+  "client_id":      "PUT-YOUR-NATIVE-APP-ID-HERE",
+  "api_resource":   "https://tunnel.example.com",
+  "required_scope": "tunnel:connect",
+  "algorithms":     ["ES384", "ES256", "RS256"],
+
+  "_allowed_emails": "Optional second gate. The real gate is the IdP role that carries required_scope. Empty list = trust the role alone.",
+  "allowed_emails": [],
+  "require_verified_email": true,
+
+  "ca_key":      "/ca/tunnel_ca",
+  "principal":   "tunnel",
+  "cert_ttl":    "12h",
+  "serial_file": "/state/serial",
+
+  "_tunnel": "Handed back to the client on success so it configures nothing by hand.",
+  "tunnel_host": "198.51.100.10",
+  "tunnel_port": 2223,
+  "tunnel_user": "tunnel",
+  "host_key":         "ssh-ed25519 AAAA... (contents of the tunnel container's ssh_host_ed25519_key.pub, minus the comment)",
+  "host_fingerprint": "SHA256:...",
+
+  "rate_limit_per_hour": 20
+}

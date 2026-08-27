@@ -1,0 +1,6 @@
+# Pinned: this container is rebuilt on the VPS, and an unattended
+# `pip install` of a moving target is how a 2 GB box gets a surprise.
+Flask==3.1.0
+waitress==3.0.2
+PyJWT==2.10.1
+cryptography==44.0.0
