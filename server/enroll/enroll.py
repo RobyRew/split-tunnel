@@ -81,6 +81,14 @@ HOST_FINGERPRINT = CFG.get("host_fingerprint", "")
 # WebSocket relay. Advertised to the client so it can fall back to carrying
 # SSH inside WSS on 443 when a direct connection to the tunnel port is dropped
 # — the normal case on a managed network that proxies HTTPS.
+# Loopback port the desktop client listens on for the OAuth redirect.
+#
+# Authorization code, not the device flow: Logto does NOT attach API-resource
+# scopes to a device-code grant, so a token minted that way never carries the
+# required scope and every enrolment fails. Verified against Logto's own Grant
+# records — device-code grants have no `resources` key at all.
+REDIRECT_PORT = int(CFG.get("redirect_port", 0))
+
 WS_URL = CFG.get("ws_url", "")
 WS_TARGET = CFG.get("ws_target", "")
 
@@ -296,6 +304,7 @@ def client_config():
         "cert_ttl": CERT_TTL,
         "ws_url": WS_URL,
         "ws_target": WS_TARGET,
+        "redirect_port": REDIRECT_PORT,
     })
 
 

@@ -1,6 +1,6 @@
 [package]
 name = "split-tunnel"
-version = "0.3.1"
+version = "0.4.0"
 description = "Route a single Windows application through your own VPS over SOCKS5"
 authors = ["RobyRew"]
 edition = "2021"
@@ -20,6 +20,9 @@ serde_json = "1"
 # not reqwest: no async runtime, no native OpenSSL, and therefore nothing for
 # the Windows CI build to fail on.
 ureq = { version = "2", features = ["json", "tls"], default-features = false }
+
+# PKCE needs SHA-256 for the code challenge. Pure Rust, no build script.
+sha2 = "0.10"
 
 # Generates the ed25519 keypair whose public half is sent for signing. The
 # private half is written locally and never transmitted.

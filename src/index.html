@@ -45,8 +45,9 @@
     <!-- Waiting for the browser half of the device flow. -->
     <section class="card hidden" id="card-waiting">
       <h2>Finish in your browser</h2>
-      <p class="hint">A browser window should have opened. If it did not, go to
-        <span class="path" id="vuri">—</span> and enter this code:</p>
+      <p class="hint" id="waitmsg">A browser window should have opened.</p>
+      <p class="path" id="vuri">—</p>
+      <p class="hint hidden" id="codehint">Enter this code:</p>
       <div class="code" id="ucode">—</div>
       <button id="cancel" class="wide">Cancel</button>
     </section>

@@ -38,6 +38,17 @@ pub struct OidcSettings {
     /// whole sign-in with `invalid_scope`. Letting the server say what to ask
     /// for means that changes there never need a new client build.
     pub scopes: String,
+    /// Loopback port for the authorization-code redirect. Server-driven so it
+    /// always matches what is registered with the identity provider — a
+    /// mismatch is rejected outright and is tedious to diagnose.
+    pub redirect_port: u16,
+}
+
+/// The redirect URI, built from the port. 127.0.0.1 rather than "localhost" on
+/// purpose: "localhost" can resolve to ::1 and then fail to match a listener
+/// bound to IPv4.
+pub fn redirect_uri(port: u16) -> String {
+    format!("http://127.0.0.1:{port}/callback")
 }
 
 impl OidcSettings {
@@ -356,4 +367,223 @@ pub fn open_in_browser(url: &str) {
     {
         let _ = std::process::Command::new("xdg-open").arg(url).spawn();
     }
+}
+
+// ── Authorization Code + PKCE ─────────────────────────────────────────────
+//
+// This exists because Logto's device flow does NOT attach API-resource scopes
+// to the grant. Verified in the database: a device-code Grant carries only
+// `openid.scope` and no `resources` key at all, while an authorization-code
+// Grant from the same server carries `resources: {...}`. So `tunnel:connect`
+// could never reach the access token over the device flow, no matter how the
+// roles were configured.
+//
+// The loopback listener is confined to 127.0.0.1 and lives for one request, so
+// it works identically on a locked-down network — nothing leaves the machine.
+
+/// base64url without padding, per RFC 7636.
+fn b64url(bytes: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        let take = chunk.len() + 1;
+        for i in 0..take {
+            out.push(T[((n >> (18 - 6 * i)) & 0x3F) as usize] as char);
+        }
+    }
+    out
+}
+
+fn random_b64(len: usize) -> String {
+    // ssh-key already brings a CSPRNG; reuse it rather than add another crate.
+    use ssh_key::rand_core::RngCore;
+    let mut buf = vec![0u8; len];
+    ssh_key::rand_core::OsRng.fill_bytes(&mut buf);
+    b64url(&buf)
+}
+
+fn percent(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+pub struct Pkce {
+    pub verifier: String,
+    pub challenge: String,
+    pub state: String,
+}
+
+pub fn pkce() -> Pkce {
+    use sha2::{Digest, Sha256};
+    let verifier = random_b64(48);
+    let challenge = b64url(&Sha256::digest(verifier.as_bytes()));
+    Pkce {
+        verifier,
+        challenge,
+        state: random_b64(16),
+    }
+}
+
+/// The URL to open in the browser.
+pub fn authorize_url(settings: &OidcSettings, redirect_uri: &str, p: &Pkce) -> String {
+    let mut url = format!(
+        "{}/auth?client_id={}&response_type=code&redirect_uri={}&scope={}\
+         &code_challenge={}&code_challenge_method=S256&state={}",
+        settings.issuer.trim_end_matches('/'),
+        percent(&settings.client_id),
+        percent(redirect_uri),
+        percent(&settings.scopes()),
+        percent(&p.challenge),
+        percent(&p.state),
+    );
+    if !settings.resource.trim().is_empty() {
+        url.push_str(&format!("&resource={}", percent(settings.resource.trim())));
+    }
+    url
+}
+
+/// Wait on 127.0.0.1:`port` for the browser redirect and return the code.
+///
+/// Bound to the loopback interface and closed after one request. `state` is
+/// checked because without it any local process could feed us a code.
+pub fn await_code(
+    port: u16,
+    expect_state: &str,
+    timeout_secs: u64,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<String, String> {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind(("127.0.0.1", port))
+        .map_err(|e| format!("cannot listen on 127.0.0.1:{port} for the sign-in reply: {e}"))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("cannot configure the sign-in listener: {e}"))?;
+
+    let deadline = now() + timeout_secs;
+    while now() < deadline {
+        if cancelled() {
+            return Err("sign-in cancelled".into());
+        }
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+
+                let target = req
+                    .lines()
+                    .next()
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .unwrap_or("");
+                let query = target.split_once('?').map(|(_, q)| q).unwrap_or("");
+                let mut code = String::new();
+                let mut state = String::new();
+                let mut err = String::new();
+                for pair in query.split('&') {
+                    let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+                    let v = v.replace('+', " ");
+                    let v = percent_decode(&v);
+                    match k {
+                        "code" => code = v,
+                        "state" => state = v,
+                        "error" => err = v,
+                        _ => {}
+                    }
+                }
+
+                let ok = err.is_empty() && !code.is_empty() && state == expect_state;
+                let body = if ok {
+                    "<h2>Signed in</h2><p>You can close this tab and return to SplitTunnel.</p>"
+                } else {
+                    "<h2>Sign-in failed</h2><p>Return to SplitTunnel for the reason.</p>"
+                };
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\
+                         Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .as_bytes(),
+                );
+                let _ = stream.flush();
+
+                if !err.is_empty() {
+                    return Err(format!("the identity provider refused: {err}"));
+                }
+                if code.is_empty() {
+                    return Err("the browser came back without an authorization code".into());
+                }
+                if state != expect_state {
+                    return Err("sign-in state mismatch — the reply did not match the request".into());
+                }
+                return Ok(code);
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            Err(e) => return Err(format!("sign-in listener failed: {e}")),
+        }
+    }
+    Err("timed out waiting for the browser sign-in".into())
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+/// Exchange the authorization code for tokens.
+pub fn exchange_code(
+    agent: &ureq::Agent,
+    settings: &OidcSettings,
+    redirect_uri: &str,
+    code: &str,
+    verifier: &str,
+) -> Result<Tokens, String> {
+    let mut form: Vec<(&str, &str)> = vec![
+        ("grant_type", "authorization_code"),
+        ("code", code),
+        ("redirect_uri", redirect_uri),
+        ("client_id", settings.client_id.as_str()),
+        ("code_verifier", verifier),
+    ];
+    if !settings.resource.trim().is_empty() {
+        form.push(("resource", settings.resource.trim()));
+    }
+    let v = post_form(agent, &settings.token_endpoint(), &form)?;
+    if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+        return Err(describe(err, &v));
+    }
+    Ok(into_tokens(v))
 }

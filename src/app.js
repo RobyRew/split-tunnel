@@ -250,8 +250,16 @@ async function paintAuth() {
   show("card-account", state === "SignedIn" || state === "Enrolling");
 
   if (state === "Waiting") {
-    $("ucode").textContent = d.user_code || "—";
+    // The browser-redirect flow has no user code; showing an empty box there
+    // would just look broken.
+    const hasCode = !!(d.user_code && d.user_code.length);
+    $("ucode").classList.toggle("hidden", !hasCode);
+    $("codehint").classList.toggle("hidden", !hasCode);
+    if (hasCode) $("ucode").textContent = d.user_code;
     $("vuri").textContent = d.verification_uri || "—";
+    $("waitmsg").textContent = hasCode
+      ? "A browser window should have opened. If it did not, go to this address and enter the code:"
+      : "A browser window should have opened — sign in there, then come back. If it did not open, use this link:";
   }
 
   if (state === "Enrolling") {

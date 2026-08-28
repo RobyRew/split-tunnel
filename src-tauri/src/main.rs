@@ -115,6 +115,10 @@ fn discover(app: State<App>, base: String) -> Result<OidcSettings, String> {
         resource: s("resource"),
         scope: s("scope"),
         scopes: s("scopes"),
+        redirect_port: v
+            .get("redirect_port")
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0) as u16,
     };
     if !settings.is_complete() {
         return Err("That server did not return a usable sign-in configuration.".into());
@@ -310,6 +314,16 @@ fn sign_in(app: State<App>) -> Result<DevicePrompt, String> {
     let cfg = app.cfg.lock().unwrap().clone();
     if !cfg.oidc.is_complete() {
         return Err("Enter the tunnel server address and press Connect account first.".into());
+    }
+
+    // Authorization code + PKCE whenever the server names a redirect port.
+    //
+    // The device flow is kept only as a fallback: Logto does not attach
+    // API-resource scopes to a device-code grant, so a token minted that way
+    // never carries `tunnel:connect` and enrolment always fails. Confirmed
+    // against the Grant records — device-code grants have no `resources` key.
+    if cfg.oidc.redirect_port > 0 {
+        return sign_in_authcode(app, cfg);
     }
 
     let agent = net::agent_for(&cfg.proxy, &cfg.oidc.issuer, 20);
