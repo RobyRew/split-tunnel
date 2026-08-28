@@ -21,17 +21,30 @@
       <div><h1>SplitTunnel <span id="ver" class="ver">…</span></h1>
         <p class="sub">One app through your server</p></div>
     </div>
-    <span id="pill" class="pill stopped">Stopped</span>
+    <div class="hdr-right">
+      <span id="pill" class="pill stopped">Stopped</span>
+      <button id="gear" class="gear" title="Settings" aria-label="Settings">⚙</button>
+    </div>
   </header>
+
+  <!-- Settings menu. Update controls live here rather than taking up room in
+       the main view, where a permanently visible button reads as clutter. -->
+  <div id="settings" class="menu hidden">
+    <div class="menu-row"><span>Version</span><b id="ver2">—</b></div>
+    <div class="menu-row"><span>Updates</span><span id="updstatus" class="hint">—</span></div>
+    <button id="checkupd" class="wide">Check for updates</button>
+    <button id="updnow" class="primary wide hidden">Install update</button>
+  </div>
 
   <main>
     <div id="banner" class="banner hidden"></div>
 
-    <!-- Shown only when a newer signed build exists. -->
+    <!-- Only when a newer signed build exists, and dismissible. -->
     <div id="update" class="update hidden">
-      <div><b>Update available</b> <span id="updver"></span>
-        <div class="hint" id="updnote">This install will be replaced and the app restarted.</div></div>
-      <button id="updnow" class="primary">Update</button>
+      <span>Update available <b id="updver"></b></span>
+      <span class="grow"></span>
+      <button id="updopen" class="link">Install</button>
+      <button id="upddismiss" class="link" title="Dismiss">✕</button>
     </div>
     <!-- Signed out: the only thing to fill in is the server address. -->
     <section class="card" id="card-signin">
@@ -105,8 +118,7 @@
       <p>Pageant: <b id="pag">checking…</b></p>
       <p class="path">ssh: <span id="ssh">—</span></p>
       <p class="path">plink: <span id="plink">—</span></p>
-      <button id="checkupd" class="link">Check for updates</button>
-      <span id="updstatus" class="hint"></span>
+
     </details>
 
     <details class="card muted" id="card-log">

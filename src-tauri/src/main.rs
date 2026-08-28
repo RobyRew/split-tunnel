@@ -65,11 +65,33 @@ struct UpdateInfo {
 /// The signature is checked by the plugin against the public key baked into
 /// tauri.conf.json, so an update that was tampered with — or served from
 /// somewhere else entirely — is refused before anything is written to disk.
+/// Build an updater that honours the corporate proxy.
+///
+/// The plugin has its own HTTP client and knows nothing about the proxy the
+/// rest of the app resolves, so on a managed network every check failed with a
+/// bare "error sending request" — on a machine whose browser reaches GitHub
+/// perfectly well.
+fn updater_for(app: &tauri::AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    // Copy what we need and drop the lock before any await.
+    let proxy = {
+        let state = app.state::<App>();
+        let cfg = state.cfg.lock().unwrap().clone();
+        net::detect_for(&cfg.proxy, "https://github.com").url
+    };
+    let mut b = app.updater_builder();
+    if !proxy.is_empty() {
+        if let Ok(u) = tauri::Url::parse(&proxy) {
+            b = b.proxy(u);
+        }
+    }
+    b.build().map_err(|e| format!("updater unavailable: {e}"))
+}
+
 #[tauri::command]
 async fn check_update(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
-    use tauri_plugin_updater::UpdaterExt;
     let current = app.package_info().version.to_string();
-    let updater = app.updater().map_err(|e| format!("updater unavailable: {e}"))?;
+    let updater = updater_for(&app)?;
     match updater.check().await {
         Ok(Some(u)) => Ok(UpdateInfo {
             available: true,
@@ -90,8 +112,7 @@ async fn check_update(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
 /// Download, verify and install the update, then restart into it.
 #[tauri::command]
 async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri_plugin_updater::UpdaterExt;
-    let updater = app.updater().map_err(|e| format!("updater unavailable: {e}"))?;
+    let updater = updater_for(&app)?;
     let update = updater
         .check()
         .await

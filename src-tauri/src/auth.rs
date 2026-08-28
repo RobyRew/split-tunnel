@@ -466,6 +466,13 @@ pub fn authorize_url(settings: &OidcSettings, redirect_uri: &str, p: &Pkce) -> S
     if !settings.resource.trim().is_empty() {
         url.push_str(&format!("&resource={}", percent(settings.resource.trim())));
     }
+    // Without prompt=consent the provider silently DROPS offline_access, and
+    // no refresh token is issued — so the certificate could never renew itself
+    // and the user would be sent back to the browser every 12 hours. Confirmed
+    // from the stored grant, which came back with scope "openid" alone.
+    if settings.scopes().contains("offline_access") {
+        url.push_str("&prompt=consent");
+    }
     url
 }
 

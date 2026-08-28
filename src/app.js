@@ -323,13 +323,35 @@ function wireEvents() {
     }
   });
 
+  const closeMenu = () => $("settings").classList.add("hidden");
+
+  $("gear").addEventListener("click", (e) => {
+    e.stopPropagation();
+    $("settings").classList.toggle("hidden");
+  });
+  // Click-away, so the menu never gets stranded open over the main view.
+  document.addEventListener("click", (e) => {
+    if (!$("settings").contains(e.target) && e.target !== $("gear")) closeMenu();
+  });
+
   $("checkupd").addEventListener("click", (e) => {
     $("updstatus").textContent = "checking…";
     withBusy(e.currentTarget, "Checking…", () => checkUpdate(false)).catch(() => {});
   });
 
+  $("upddismiss").addEventListener("click", () => {
+    updateDismissed = true;
+    $("update").classList.add("hidden");
+  });
+
+  $("updopen").addEventListener("click", () => {
+    $("update").classList.add("hidden");
+    $("settings").classList.remove("hidden");
+  });
+
   $("updnow").addEventListener("click", async (e) => {
     try {
+      closeMenu();
       await withBusy(e.currentTarget, "Updating…", async () => {
         say("Downloading and verifying the update…");
         // The app restarts itself on success, so there is no "done" state to
@@ -502,22 +524,29 @@ async function loadState() {
 }
 
 // ── Updates ───────────────────────────────────────────────────────────────
+let updateDismissed = false;
+
 async function checkUpdate(quiet) {
   try {
     const u = await invoke("check_update");
+    $("ver2").textContent = u.current;
     if (u.available) {
       $("updver").textContent = `${u.current} → ${u.version}`;
-      $("update").classList.remove("hidden");
-      if (!quiet) $("updstatus").textContent = `version ${u.version} is available`;
+      $("updstatus").textContent = `${u.version} available`;
+      $("updnow").classList.remove("hidden");
+      // The banner is a nudge, not a fixture: once dismissed it stays gone for
+      // this run, and the menu keeps the action available.
+      if (!updateDismissed) $("update").classList.remove("hidden");
     } else {
       $("update").classList.add("hidden");
-      if (!quiet) $("updstatus").textContent = `up to date (${u.current})`;
+      $("updnow").classList.add("hidden");
+      $("updstatus").textContent = `up to date`;
     }
     return u;
   } catch (e) {
-    // A failed check is not worth a banner — it usually just means the
-    // network is unavailable, which the user already knows.
-    if (!quiet) $("updstatus").textContent = String(e);
+    // A failed check is not worth a banner — on a managed network it usually
+    // just means the proxy was not resolved, which the Diagnose report covers.
+    $("updstatus").textContent = quiet ? "check failed" : String(e);
     log("ERROR", "check_update", String(e));
     return null;
   }
