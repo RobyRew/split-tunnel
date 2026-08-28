@@ -135,6 +135,33 @@ async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// What Spotify is actually configured with — read back from its own prefs
+/// rather than assumed, because a wrong key or an unquoted value looks exactly
+/// like the feature silently doing nothing.
+#[tauri::command(async)]
+fn spotify_state(app: State<App>) -> spotify::SpotifyState {
+    let port = app.cfg.lock().unwrap().local_port;
+    spotify::state(port)
+}
+
+#[tauri::command(async)]
+fn spotify_apply(app: State<App>) -> Result<spotify::SpotifyState, String> {
+    let port = app.cfg.lock().unwrap().local_port;
+    spotify::apply(port)
+}
+
+#[tauri::command(async)]
+fn spotify_restore() -> Result<(), String> {
+    spotify::restore()
+}
+
+/// Which applications currently hold connections to the local SOCKS listener.
+#[tauri::command(async)]
+fn connected_apps(app: State<App>) -> Vec<tunnel::ClientApp> {
+    let port = app.cfg.lock().unwrap().local_port;
+    tunnel::connected_apps(port)
+}
+
 #[tauri::command]
 fn get_config(app: State<App>) -> Config {
     app.cfg.lock().unwrap().clone()
@@ -256,6 +283,17 @@ fn check_server(app: State<App>, base: String) -> ServerProbe {
                 let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
                 if s("client_id").is_empty() || s("issuer").is_empty() {
                     return fail("Reachable, but not configured for sign-in".into(), String::new());
+                }
+                // This proxy demonstrably works; remember it so a later WPAD
+                // failure does not strand the user.
+                if !proxy.url.is_empty() {
+                    net::remember(&proxy.url);
+                    // Persist it too, so the next launch starts knowing.
+                    let mut guard = app.cfg.lock().unwrap();
+                    if guard.proxy_last_good != proxy.url {
+                        guard.proxy_last_good = proxy.url.clone();
+                        let _ = guard.save(&app.dir);
+                    }
                 }
                 ServerProbe {
                     reachable: true,
@@ -702,6 +740,8 @@ fn main() {
                 .map(|r| r.join("bin"))
                 .unwrap_or_else(|_| PathBuf::from("bin"));
             let cfg = Config::load(&dir);
+            // Seed the remembered proxy before anything makes a request.
+            net::remember(&cfg.proxy_last_good);
 
             // Reflect any certificate already on disk, so a restart does not
             // present a signed-in user with a "Sign in" button.
@@ -780,6 +820,10 @@ fn main() {
             network_test,
             check_update,
             install_update,
+            spotify_state,
+            spotify_apply,
+            spotify_restore,
+            connected_apps,
             sign_in,
             cancel_sign_in,
             sign_out,

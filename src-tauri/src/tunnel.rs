@@ -427,3 +427,89 @@ impl Supervisor {
         *self.status.lock().unwrap() = Status::Stopped;
     }
 }
+
+/// A process currently holding connections to the local SOCKS listener.
+#[derive(Serialize, Clone, Debug)]
+pub struct ClientApp {
+    pub name: String,
+    pub pid: u32,
+    pub connections: u32,
+}
+
+/// Which applications are actually using the tunnel right now.
+///
+/// There is no OS-wide register of "apps configured for a SOCKS proxy" —
+/// SOCKS is per-application configuration, not a system setting, so the
+/// question can only be answered by observation. What CAN be seen is who holds
+/// an established connection to our listener, which is the useful half anyway:
+/// it answers "is Spotify actually going through this?" rather than "was
+/// Spotify configured at some point?".
+#[cfg(windows)]
+pub fn connected_apps(local_port: u16) -> Vec<ClientApp> {
+    use std::collections::HashMap;
+    use std::os::windows::process::CommandExt;
+
+    let out = match std::process::Command::new("netstat")
+        .args(["-ano", "-p", "TCP"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
+        Err(_) => return Vec::new(),
+    };
+
+    // Count established connections whose REMOTE end is our listener; the
+    // listener's own accepted sockets appear with it as the local end, which
+    // would count the tunnel process itself rather than its clients.
+    let needle = format!("127.0.0.1:{local_port}");
+    let mut by_pid: HashMap<u32, u32> = HashMap::new();
+    for line in out.lines() {
+        if !line.contains("ESTABLISHED") {
+            continue;
+        }
+        let f: Vec<&str> = line.split_whitespace().collect();
+        if f.len() < 5 || f[2] != needle {
+            continue;
+        }
+        if let Ok(pid) = f[4].parse::<u32>() {
+            *by_pid.entry(pid).or_insert(0) += 1;
+        }
+    }
+    if by_pid.is_empty() {
+        return Vec::new();
+    }
+
+    let tasks = std::process::Command::new("tasklist")
+        .args(["/FO", "CSV", "/NH"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    let mut names: HashMap<u32, String> = HashMap::new();
+    for line in tasks.lines() {
+        let cols: Vec<&str> = line.split("\",\"").collect();
+        if cols.len() < 2 {
+            continue;
+        }
+        let name = cols[0].trim_matches('"').to_string();
+        if let Ok(pid) = cols[1].trim_matches('"').trim().parse::<u32>() {
+            names.insert(pid, name);
+        }
+    }
+
+    let mut apps: Vec<ClientApp> = by_pid
+        .into_iter()
+        .map(|(pid, connections)| ClientApp {
+            name: names.get(&pid).cloned().unwrap_or_else(|| format!("PID {pid}")),
+            pid,
+            connections,
+        })
+        .collect();
+    apps.sort_by(|a, b| b.connections.cmp(&a.connections));
+    apps
+}
+
+#[cfg(not(windows))]
+pub fn connected_apps(_local_port: u16) -> Vec<ClientApp> {
+    Vec::new()
+}

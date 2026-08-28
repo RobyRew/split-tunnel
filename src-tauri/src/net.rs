@@ -21,7 +21,36 @@
 //! `GetSystemWebProxy()` resolves WPAD *and* evaluates PAC scripts, because
 //! Windows already has the JavaScript engine we do not.
 
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+
+/// The last proxy that actually carried a request.
+///
+/// WPAD discovery needs DNS, and on this network DNS only works THROUGH the
+/// proxy — so a discovery that fails once tends to keep failing, and the user
+/// is left typing an address the app already knew. Remembering the last
+/// working value breaks that circle.
+static LAST_GOOD: OnceLock<Mutex<String>> = OnceLock::new();
+
+fn last_good_slot() -> &'static Mutex<String> {
+    LAST_GOOD.get_or_init(|| Mutex::new(String::new()))
+}
+
+/// Record a proxy that demonstrably worked, so later detection can fall back
+/// to it. Also seeded at startup from the saved config.
+pub fn remember(proxy: &str) {
+    let p = proxy.trim();
+    if p.is_empty() {
+        return;
+    }
+    if let Ok(mut g) = last_good_slot().lock() {
+        *g = p.to_string();
+    }
+}
+
+pub fn last_good() -> String {
+    last_good_slot().lock().map(|g| g.clone()).unwrap_or_default()
+}
 
 /// What we found, in a form fit to show a human.
 #[derive(Clone, Debug, Default)]
@@ -186,6 +215,14 @@ pub fn detect_for(override_url: &str, target: &str) -> ProxyInfo {
     if let Some(p) = system_proxy_for(target) {
         info.url = normalise(&p);
         info.source = "Windows (WPAD/PAC)".into();
+        return info;
+    }
+    // Nothing found now — but if a proxy worked before, it almost certainly
+    // still does. Detection is the flaky part here, not the proxy.
+    let remembered = last_good();
+    if !remembered.is_empty() {
+        info.url = normalise(&remembered);
+        info.source = "remembered".into();
     }
     info
 }

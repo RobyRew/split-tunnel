@@ -10,13 +10,13 @@
   <header>
     <div class="brand">
       <svg viewBox="0 0 64 64" class="mark" aria-hidden="true">
-        <path d="M9 32h14" stroke="#475569" stroke-width="6" stroke-linecap="round" fill="none"/>
-        <path d="M23 32 Q40 32 55 18" stroke="#475569" stroke-width="6" stroke-linecap="round" fill="none"/>
+        <path d="M9 32h14" class="m-dim" stroke-width="6" stroke-linecap="round" fill="none"/>
+        <path d="M23 32 Q40 32 55 18" class="m-dim" stroke-width="6" stroke-linecap="round" fill="none"/>
         <path d="M23 32 Q40 32 52 48" stroke="url(#g)" stroke-width="7" stroke-linecap="round" fill="none"/>
-        <circle cx="23" cy="32" r="5" fill="#e8f0fe"/>
-        <circle cx="52" cy="48" r="6" fill="#22d3ee"/>
+        <circle cx="23" cy="32" r="5" class="m-hub"/>
+        <circle cx="52" cy="48" r="6" fill="#34d399"/>
         <defs><linearGradient id="g" x1="23" y1="32" x2="52" y2="48" gradientUnits="userSpaceOnUse">
-          <stop stop-color="#10b981"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs>
+          <stop stop-color="#0d9d6f"/><stop offset="1" stop-color="#34d399"/></linearGradient></defs>
       </svg>
       <div><h1>SplitTunnel <span id="ver" class="ver">…</span></h1>
         <p class="sub">One app through your server</p></div>
@@ -27,102 +27,135 @@
     </div>
   </header>
 
-  <!-- Settings menu. Update controls live here rather than taking up room in
-       the main view, where a permanently visible button reads as clutter. -->
+  <!-- Everything occasional lives here, so the main view stays about the one
+       thing the app is for: connecting. -->
   <div id="settings" class="menu hidden">
+    <div class="menu-sec">Appearance</div>
+    <label class="menu-field">Theme
+      <select id="theme">
+        <option value="system">Match Windows</option>
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+      </select></label>
+
+    <div class="menu-sec">Updates</div>
     <div class="menu-row"><span>Version</span><b id="ver2">—</b></div>
-    <div class="menu-row"><span>Updates</span><span id="updstatus" class="hint">—</span></div>
-    <button id="checkupd" class="wide">Check for updates</button>
+    <div class="menu-row"><span>Status</span><span id="updstatus" class="hint">—</span></div>
+    <label class="menu-field">Check
+      <select id="updhours">
+        <option value="0">Never</option>
+        <option value="24">Daily</option>
+        <option value="168">Weekly</option>
+      </select></label>
+    <button id="checkupd" class="wide">Check now</button>
     <button id="updnow" class="primary wide hidden">Install update</button>
+
+    <div class="menu-sec">Diagnostics</div>
+    <label class="check"><input type="checkbox" id="keeplog" /> <span>Keep an activity log</span></label>
+    <button id="nettest" class="wide">Connection test</button>
+    <button id="signout" class="wide">Sign out</button>
   </div>
 
   <main>
     <div id="banner" class="banner hidden"></div>
 
-    <!-- Only when a newer signed build exists, and dismissible. -->
     <div id="update" class="update hidden">
       <span>Update available <b id="updver"></b></span>
       <span class="grow"></span>
       <button id="updopen" class="link">Install</button>
       <button id="upddismiss" class="link" title="Dismiss">✕</button>
     </div>
-    <!-- Signed out: the only thing to fill in is the server address. -->
-    <section class="card" id="card-signin">
-      <h2>Account</h2>
-      <label>Tunnel server
-        <input id="base" placeholder="tunnel.example.com" autocomplete="off" spellcheck="false" /></label>
+
+    <!-- STEP 1 — first run. One field, nothing else on screen. -->
+    <section class="card hidden" id="card-setup">
+      <h2>Set up</h2>
+      <p class="lead">Enter the address your administrator gave you.</p>
+      <input id="base" placeholder="tunnel.example.com" autocomplete="off" spellcheck="false" />
       <div class="srv">
         <span id="srvdot" class="dot idle"></span>
-        <span id="srvtext" class="srvtext idle">Enter your tunnel server address</span>
-        <button id="recheck" class="link">Re-check</button>
-        <button id="nettest" class="link">Diagnose</button>
+        <span id="srvtext" class="srvtext idle">Waiting for an address…</span>
+        <button id="recheck" class="link">Retry</button>
       </div>
-      <p class="hint">Sign in with the account your administrator authorised. Your key is
+    </section>
+
+    <!-- STEP 2 — sign in -->
+    <section class="card hidden" id="card-signin">
+      <h2>Sign in</h2>
+      <p class="lead">Use the account you were authorised with. Your key is
         created on this PC and never leaves it.</p>
       <button id="signin" class="primary wide" disabled>Sign in</button>
     </section>
 
-    <!-- Waiting for the browser half of the device flow. -->
+    <!-- STEP 2b — browser handoff -->
     <section class="card hidden" id="card-waiting">
       <h2>Finish in your browser</h2>
-      <p class="hint" id="waitmsg">A browser window should have opened.</p>
+      <p class="lead" id="waitmsg">A browser window should have opened.</p>
       <p class="path" id="vuri">—</p>
       <p class="hint hidden" id="codehint">Enter this code:</p>
-      <div class="code" id="ucode">—</div>
-      <button id="copyurl" class="link hidden">Copy link</button>
-      <button id="cancel" class="wide">Cancel</button>
-    </section>
-
-    <!-- Signed in: identity and certificate life. -->
-    <section class="card hidden" id="card-account">
-      <h2>Account</h2>
-      <p class="who"><b id="who">—</b></p>
-      <p class="hint" id="certinfo">—</p>
+      <div class="code hidden" id="ucode">—</div>
       <div class="row">
-        <button id="renew">Renew now</button>
-        <button id="signout">Sign out</button>
+        <button id="copyurl" class="hidden">Copy link</button>
+        <button id="cancel">Cancel</button>
       </div>
     </section>
 
-    <section class="card">
-      <h2>Local proxy</h2>
+    <!-- READY — the everyday view -->
+    <section class="card hidden" id="card-ready">
+      <div class="who-row">
+        <div class="grow">
+          <div class="who" id="who">—</div>
+          <div class="hint" id="certinfo">—</div>
+        </div>
+        <button id="renew" class="link">Renew</button>
+      </div>
+    </section>
+
+    <section class="card hidden" id="card-apps">
+      <h2>Using the tunnel</h2>
+      <div id="applist" class="applist"><span class="hint">Nothing connected yet.</span></div>
+      <p class="hint">Point an app at <code>127.0.0.1</code> : <code id="lporth">1080</code> (SOCKS5).</p>
+    </section>
+
+    <section class="card hidden" id="card-spotify">
+      <h2>Spotify</h2>
+      <p class="hint" id="spotstate">—</p>
+      <div class="row">
+        <button id="spotfix" class="hidden">Point Spotify here</button>
+        <button id="spotoff" class="hidden">Stop managing</button>
+      </div>
+    </section>
+
+    <details class="card" id="adv">
+      <summary>Advanced</summary>
+
       <label class="narrow">SOCKS5 port <input id="lport" type="number" min="1" max="65535" /></label>
-      <p class="hint">Point the app at <code>127.0.0.1</code> : <code id="lporth">1080</code> (SOCKS5).</p>
-    </section>
 
-    <section class="card">
-      <h2>Options</h2>
+      <label>HTTP proxy — leave empty to detect automatically
+        <input id="proxy" placeholder="proxy.company.com:8080" autocomplete="off" spellcheck="false" /></label>
+      <p class="hint">Detected: <b id="proxynow">—</b></p>
+
       <label class="check"><input type="checkbox" id="autostart" /> <span>Start with Windows</span></label>
-      <label class="check"><input type="checkbox" id="spot" /> <span>Manage Spotify's proxy setting <em>(experimental — backs up prefs)</em></span></label>
-    </section>
+      <label class="check"><input type="checkbox" id="spot" /> <span>Manage Spotify's proxy setting automatically</span></label>
 
-    <details class="card">
-      <summary>Manual setup (no account)</summary>
-      <p class="hint">Only needed if you were given an SSH key instead of a login.
-        Anything set here is ignored while you are signed in.</p>
+      <div class="sep"></div>
+      <p class="hint">Manual key setup — only if you were given an SSH key instead
+        of a login. Ignored while signed in.</p>
       <label>Host <input id="host" placeholder="vps.example.com or IP" autocomplete="off" spellcheck="false" /></label>
       <div class="row">
         <label class="grow">User <input id="user" placeholder="tunnel" autocomplete="off" spellcheck="false" /></label>
         <label class="narrow">Port <input id="port" type="number" min="1" max="65535" /></label>
       </div>
-      <label>Private key (.ppk) — leave empty to use a key already in Pageant
+      <label>Private key (.ppk)
         <input id="key" placeholder="C:\Users\you\keys\tunnel.ppk" autocomplete="off" spellcheck="false" /></label>
-      <label>HTTP proxy — leave empty to detect automatically
-        <input id="proxy" placeholder="proxy.company.com:8080" autocomplete="off" spellcheck="false" /></label>
-      <p class="hint">Only needed on a work network that uses an automatic proxy
-        script, which this app cannot read. Detected now: <b id="proxynow">—</b></p>
-    </details>
 
-    <details class="card muted">
-      <summary>Environment</summary>
-      <p>Pageant: <b id="pag">checking…</b></p>
+      <div class="sep"></div>
       <p class="path">ssh: <span id="ssh">—</span></p>
       <p class="path">plink: <span id="plink">—</span></p>
-
+      <p class="path">Pageant: <span id="pag">—</span></p>
     </details>
 
     <details class="card muted" id="card-log">
-      <summary>Log <span class="hint">— what the app is actually doing</span></summary>
+      <summary>Log</summary>
       <pre id="logbox" class="logbox"></pre>
       <button id="copylog" class="link">Copy</button>
     </details>
@@ -131,8 +164,7 @@
   </main>
 
   <footer>
-    <button id="toggle" class="primary">Connect</button>
-    <button id="save">Save</button>
+    <button id="toggle" class="primary wide">Connect</button>
   </footer>
   <script src="app.js"></script>
 </body>

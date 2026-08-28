@@ -1,7 +1,7 @@
 // The Tauri bridge is injected only when `withGlobalTauri` is true in
-// tauri.conf.json. It was not, and this line threw before anything was wired —
-// producing a window where no button did anything and no error was visible.
-// Never fail silently here again.
+// tauri.conf.json. It was not, once, and this line threw before anything was
+// wired — producing a window where no button did anything and no error was
+// visible. Never fail silently here again.
 if (!window.__TAURI__ || !window.__TAURI__.core) {
   document.addEventListener("DOMContentLoaded", () => {
     document.body.insertAdjacentHTML(
@@ -18,39 +18,36 @@ if (!window.__TAURI__ || !window.__TAURI__.core) {
 
 const { invoke: rawInvoke } = window.__TAURI__.core;
 const $ = (id) => document.getElementById(id);
-const F = ["host", "user", "port", "key", "lport", "proxy"];
+const show = (id, on) => $(id).classList.toggle("hidden", !on);
 
+const FIELDS = ["host", "user", "port", "key", "lport", "proxy"];
+
+let cfg = {};
 let connected = false;
 let lastAuth = null;
+let signedIn = false;
+let updateDismissed = false;
 
 // ── Log ───────────────────────────────────────────────────────────────────
-// Every call in and out, kept in memory and shown in the app.
-//
-// This exists because the first build gave no sign of what it was doing: a
-// button press that failed looked identical to one that did nothing, and the
-// only error surface was one small line that scrolls off screen. Guessing
-// from the outside is not debugging.
+// Every call in and out. This exists because an early build gave no sign of
+// what it was doing: a button press that failed looked identical to one that
+// did nothing. Can be switched off entirely — see keep_log.
 const LOG = [];
 
 function log(kind, text, detail) {
-  const line = {
+  if (cfg.keep_log === false) return;
+  LOG.push({
     t: new Date().toTimeString().slice(0, 8),
     kind,
     text,
     detail: detail === undefined ? "" : detail,
-  };
-  LOG.push(line);
+  });
   if (LOG.length > 400) LOG.shift();
-  renderLog();
-}
-
-function renderLog() {
   const el = $("logbox");
   if (!el) return;
-  el.textContent = LOG.map((l) => {
-    const d = l.detail ? `  ${l.detail}` : "";
-    return `${l.t}  ${l.kind.padEnd(5)} ${l.text}${d}`;
-  }).join("\n");
+  el.textContent = LOG.map(
+    (l) => `${l.t}  ${l.kind.padEnd(5)} ${l.text}${l.detail ? "  " + l.detail : ""}`
+  ).join("\n");
   el.scrollTop = el.scrollHeight;
 }
 
@@ -60,7 +57,6 @@ const brief = (v) => {
   return s.length > 220 ? s.slice(0, 220) + "…" : s;
 };
 
-/** invoke(), but every call and its outcome is logged. */
 async function invoke(cmd, args) {
   log("call", cmd, args ? brief(args) : "");
   try {
@@ -81,19 +77,13 @@ function say(text, kind = "") {
   if (text) log(kind === "err" ? "ERROR" : "ui", text);
 }
 
-/** Errors deserve a banner, not a line that scrolls away. */
+/** Errors get a banner, not a line that scrolls away. */
 function fail(text) {
-  const b = $("banner");
-  b.textContent = text;
-  b.classList.remove("hidden");
+  $("banner").textContent = text;
+  $("banner").classList.remove("hidden");
   log("ERROR", text);
 }
-
-function clearBanner() {
-  $("banner").classList.add("hidden");
-}
-
-const show = (id, on) => $(id).classList.toggle("hidden", !on);
+const clearBanner = () => $("banner").classList.add("hidden");
 
 /** Run an async action with visible progress on its own button. */
 async function withBusy(btn, busyLabel, fn, okLabel) {
@@ -130,8 +120,13 @@ async function withBusy(btn, busyLabel, fn, okLabel) {
   }
 }
 
+// ── Config ────────────────────────────────────────────────────────────────
+// There is no Save button. Every change is written once typing settles — a
+// Save button beside Connect only ever raised the question of whether you had
+// to press it before connecting.
 function readForm() {
   return {
+    ...cfg,
     host: $("host").value.trim(),
     user: $("user").value.trim() || "tunnel",
     port: parseInt($("port").value, 10) || 2223,
@@ -141,22 +136,23 @@ function readForm() {
     manage_spotify: $("spot").checked,
     enroll_base: $("base").value.trim(),
     proxy: $("proxy").value.trim(),
-    oidc: window.__oidc || {},
+    keep_log: $("keeplog").checked,
+    update_check_hours: parseInt($("updhours").value, 10) || 0,
+    theme: $("theme").value,
+    oidc: cfg.oidc || {},
   };
 }
 
 let saveTimer = null;
-
-/** Save after typing settles. One write per pause instead of per keystroke. */
-function saveSoon() {
+const saveSoon = () => {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => save(true), 400);
-}
+  saveTimer = setTimeout(() => save(), 400);
+};
 
-async function save(quiet) {
+async function save() {
   try {
-    await invoke("save_config", { cfg: readForm() });
-    if (!quiet) say("Saved.", "ok");
+    cfg = readForm();
+    await invoke("save_config", { cfg });
   } catch (e) {
     say(String(e), "err");
   }
@@ -170,30 +166,34 @@ function relative(ts) {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
+// ── Theme ─────────────────────────────────────────────────────────────────
+// "system" leaves it to prefers-color-scheme, which the webview inherits from
+// the Windows app theme.
+function applyTheme(t) {
+  document.documentElement.setAttribute("data-theme", t === "system" ? "" : t);
+}
+
 // ── Server reachability ───────────────────────────────────────────────────
 let probeTimer = null;
 let probeSeq = 0;
 
 function setDot(state, text) {
   $("srvdot").className = "dot " + state;
-  const label = $("srvtext");
-  label.textContent = text;
-  label.className = "srvtext " + state;
+  $("srvtext").textContent = text;
+  $("srvtext").className = "srvtext " + state;
   $("signin").disabled = state !== "up";
 }
 
 async function probeServer() {
   const base = $("base").value.trim();
-  if (!base) return setDot("idle", "Enter your tunnel server address");
+  if (!base) return setDot("idle", "Waiting for an address…");
   setDot("checking", "Checking…");
   const mine = ++probeSeq;
   try {
     const r = await invoke("check_server", { base });
-    // A probe for a half-typed address can land after the real one. Only the
-    // most recent request is allowed to paint.
-    if (mine !== probeSeq) return;
+    if (mine !== probeSeq) return; // a newer probe already answered
     if (r.reachable) {
-      setDot("up", `Online · sign in via ${r.issuer} · access lasts ${r.cert_ttl}`);
+      setDot("up", `Online · ${r.issuer} · access lasts ${r.cert_ttl}`);
       clearBanner();
     } else {
       setDot("down", r.detail);
@@ -204,14 +204,14 @@ async function probeServer() {
   }
 }
 
-function scheduleProbe(delay = 900) {
+const scheduleProbe = (delay = 900) => {
   clearTimeout(probeTimer);
   setDot("checking", "Checking…");
   probeTimer = setTimeout(probeServer, delay);
-}
+};
 
 // ── Painting ──────────────────────────────────────────────────────────────
-function paint(status) {
+function paintStatus(status) {
   const state = (status && status.state ? status.state : "Stopped").toLowerCase();
   const pill = $("pill");
   pill.className = "pill " + state;
@@ -229,11 +229,23 @@ function paint(status) {
   }
   btn.classList.toggle("on", connected);
 
-  if (status && status.detail) {
-    say(status.detail, state === "error" ? "err" : "");
-  } else if (state === "connected") {
-    say("Traffic for the configured app is routed through your server.", "ok");
-  }
+  if (status && status.detail && state === "error") fail(status.detail);
+}
+
+/** Which step of the flow the window should be showing. */
+function paintSteps(state) {
+  const haveServer = !!(cfg.enroll_base || "").trim();
+  const waiting = state === "Waiting";
+  signedIn = state === "SignedIn";
+
+  show("card-setup", !signedIn && !waiting && !haveServer);
+  show("card-signin", !signedIn && !waiting && haveServer);
+  show("card-waiting", waiting);
+  show("card-ready", signedIn);
+  show("card-apps", signedIn);
+  show("card-spotify", signedIn);
+  // Connect is meaningless before there is anything to connect with.
+  $("toggle").disabled = !signedIn && !(cfg.host || "").trim();
 }
 
 async function paintAuth() {
@@ -245,24 +257,18 @@ async function paintAuth() {
   if (changed) log("auth", state, brief(d));
   lastAuth = a;
 
-  show("card-signin", state === "SignedOut" || state === "Failed");
-  show("card-waiting", state === "Waiting");
-  show("card-account", state === "SignedIn" || state === "Enrolling");
+  paintSteps(state);
 
   if (state === "Waiting") {
-    // The browser-redirect flow has no user code; showing an empty box there
-    // would just look broken.
     const hasCode = !!(d.user_code && d.user_code.length);
-    $("ucode").classList.toggle("hidden", !hasCode);
-    $("codehint").classList.toggle("hidden", !hasCode);
+    show("ucode", hasCode);
+    show("codehint", hasCode);
+    show("copyurl", !!d.verification_uri);
     if (hasCode) $("ucode").textContent = d.user_code;
     $("vuri").textContent = d.verification_uri || "—";
-    // Selectable, so a browser that refuses to open can be worked around by
-    // copying the link rather than being stuck.
-    $("copyurl").classList.toggle("hidden", !d.verification_uri);
     $("waitmsg").textContent = hasCode
-      ? "A browser window should have opened. If it did not, go to this address and enter the code:"
-      : "A browser window should have opened — sign in there, then come back. If it did not open, use this link:";
+      ? "A browser window should have opened. If not, go to this address and enter the code:"
+      : "Sign in there, then come back. If it did not open, use this link:";
   }
 
   if (state === "Enrolling") {
@@ -274,35 +280,114 @@ async function paintAuth() {
     $("who").textContent = d.email || "Signed in";
     const rec = await rawInvoke("enrollment").catch(() => null);
     $("certinfo").textContent = rec
-      ? `Access valid for ${relative(rec.expires_at)} — renews itself. Server ${rec.host}:${rec.port}`
-      : `Access valid for ${relative(d.expires_at)} — renews itself.`;
-    if (changed) { say("Signed in. You can connect now.", "ok"); clearBanner(); }
+      ? `Valid for ${relative(rec.expires_at)} — renews itself · ${rec.host}:${rec.port}`
+      : `Valid for ${relative(d.expires_at)} — renews itself`;
+    if (changed) clearBanner();
   }
 
   if (state === "Failed" && changed) fail(String(d));
 }
 
+/** Who is actually using the tunnel. */
+async function paintApps() {
+  if (!signedIn) return;
+  if (!connected) {
+    $("applist").innerHTML = '<span class="hint">Not connected.</span>';
+    return;
+  }
+  const apps = await rawInvoke("connected_apps").catch(() => []);
+  if (!apps.length) {
+    $("applist").innerHTML =
+      '<span class="hint">Connected, but no app is using it yet.</span>';
+    return;
+  }
+  $("applist").innerHTML = apps
+    .map(
+      (a) =>
+        `<div class="app"><span class="appname">${a.name}</span>` +
+        `<span class="hint">${a.connections} connection${a.connections === 1 ? "" : "s"}</span></div>`
+    )
+    .join("");
+}
+
+async function paintSpotify() {
+  if (!signedIn) return;
+  const s = await rawInvoke("spotify_state").catch(() => null);
+  if (!s || !s.found) {
+    $("spotstate").textContent =
+      "Spotify's settings file was not found. Open Spotify once, then come back.";
+    show("spotfix", false);
+    show("spotoff", false);
+    return;
+  }
+  if (s.points_at_us) {
+    $("spotstate").textContent = s.running
+      ? "Pointed here — quit Spotify completely and reopen it to take effect."
+      : "Pointed here. Start Spotify and it will use the tunnel.";
+    show("spotfix", false);
+    show("spotoff", true);
+  } else {
+    $("spotstate").textContent =
+      s.mode === 0
+        ? "Not using a proxy."
+        : `Using a different proxy (mode ${s.mode}, ${s.addr}:${s.port}).`;
+    show("spotfix", true);
+    show("spotoff", false);
+  }
+}
+
 async function refresh() {
-  try { paint(await rawInvoke("get_status")); } catch (_) {}
+  try { paintStatus(await rawInvoke("get_status")); } catch (_) {}
   await paintAuth();
+  await paintApps();
+}
+
+// ── Updates ───────────────────────────────────────────────────────────────
+async function checkUpdate(quiet) {
+  try {
+    const u = await invoke("check_update");
+    $("ver2").textContent = u.current;
+    if (u.available) {
+      $("updver").textContent = `${u.current} → ${u.version}`;
+      $("updstatus").textContent = `${u.version} available`;
+      show("updnow", true);
+      if (!updateDismissed) show("update", true);
+    } else {
+      show("update", false);
+      show("updnow", false);
+      $("updstatus").textContent = "up to date";
+    }
+    return u;
+  } catch (e) {
+    // Not banner-worthy: on a managed network it usually just means the proxy
+    // was not resolved, which the connection test covers properly.
+    $("updstatus").textContent = quiet ? "check failed" : String(e);
+    log("ERROR", "check_update", String(e));
+    return null;
+  }
 }
 
 // ── Wiring ────────────────────────────────────────────────────────────────
-/**
- * Attach every handler. Contains NO awaits on purpose.
- *
- * In the first build all of this lived after several `await invoke(...)` calls
- * inside boot(). Any one of them failing meant no handler was ever attached
- * and the whole window became inert — which is precisely the "nothing reacts
- * to anything" symptom. Wiring first means the UI always responds, even when
- * loading state fails.
- */
+// Contains NO awaits: handlers used to be registered after several awaited
+// commands, so one failure left the whole window inert.
 function wireEvents() {
-  F.forEach((id) => $(id).addEventListener("input", saveSoon));
+  FIELDS.forEach((id) => $(id).addEventListener("input", saveSoon));
   $("lport").addEventListener("input", () => ($("lporth").textContent = $("lport").value));
-  $("spot").addEventListener("change", () => save(true));
-
   $("base").addEventListener("input", () => { saveSoon(); scheduleProbe(); });
+
+  ["spot", "keeplog"].forEach((id) => $(id).addEventListener("change", save));
+  $("updhours").addEventListener("change", save);
+  $("theme").addEventListener("change", () => { applyTheme($("theme").value); save(); });
+
+  const closeMenu = () => $("settings").classList.add("hidden");
+  $("gear").addEventListener("click", (e) => {
+    e.stopPropagation();
+    $("settings").classList.toggle("hidden");
+  });
+  document.addEventListener("click", (e) => {
+    if (!$("settings").contains(e.target) && e.target !== $("gear")) closeMenu();
+  });
+
   $("recheck").addEventListener("click", (e) =>
     withBusy(e.currentTarget, "Checking…", probeServer).catch(() => {}));
 
@@ -310,93 +395,72 @@ function wireEvents() {
     $("card-log").open = true;
     try {
       await withBusy(e.currentTarget, "Testing…", async () => {
-        await save(true);
+        await save();
         const rows = await rawInvoke("network_test");
-        log("test", "── connectivity report ──");
+        log("test", "── connection test ──");
         rows.forEach((r) => log(r.ok ? "PASS" : "FAIL", r.name, r.detail));
         const bad = rows.filter((r) => !r.ok).map((r) => r.name);
         say(bad.length ? `Failed: ${bad.join(", ")}` : "All checks passed.",
             bad.length ? "err" : "ok");
       });
-    } catch (err) {
-      fail(String(err));
-    }
-  });
-
-  const closeMenu = () => $("settings").classList.add("hidden");
-
-  $("gear").addEventListener("click", (e) => {
-    e.stopPropagation();
-    $("settings").classList.toggle("hidden");
-  });
-  // Click-away, so the menu never gets stranded open over the main view.
-  document.addEventListener("click", (e) => {
-    if (!$("settings").contains(e.target) && e.target !== $("gear")) closeMenu();
+    } catch (err) { fail(String(err)); }
   });
 
   $("checkupd").addEventListener("click", (e) => {
     $("updstatus").textContent = "checking…";
     withBusy(e.currentTarget, "Checking…", () => checkUpdate(false)).catch(() => {});
   });
-
   $("upddismiss").addEventListener("click", () => {
     updateDismissed = true;
-    $("update").classList.add("hidden");
+    show("update", false);
   });
-
   $("updopen").addEventListener("click", () => {
-    $("update").classList.add("hidden");
+    show("update", false);
     $("settings").classList.remove("hidden");
   });
-
   $("updnow").addEventListener("click", async (e) => {
     try {
       closeMenu();
       await withBusy(e.currentTarget, "Updating…", async () => {
         say("Downloading and verifying the update…");
-        // The app restarts itself on success, so there is no "done" state to
-        // paint here — control does not come back.
+        // The app restarts itself on success; control does not come back.
         await invoke("install_update");
       });
-    } catch (err) {
-      fail(`Update failed: ${err}`);
-    }
+    } catch (err) { fail(`Update failed: ${err}`); }
   });
 
   $("copylog").addEventListener("click", async (e) => {
     const b = e.currentTarget;
-    const text = $("logbox").textContent;
-    // navigator.clipboard is refused in this webview, so go through the OS.
     try {
-      await rawInvoke("copy_text", { text });
-      b.textContent = "Copied";
-      setTimeout(() => (b.textContent = "Copy"), 1400);
-      return;
-    } catch (_) {}
-    try {
-      await navigator.clipboard.writeText(text);
+      await rawInvoke("copy_text", { text: $("logbox").textContent });
       b.textContent = "Copied";
       setTimeout(() => (b.textContent = "Copy"), 1400);
     } catch (_) {
-      // Last resort: select it so Ctrl+C works.
       const r = document.createRange();
       r.selectNodeContents($("logbox"));
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(r);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(r);
       say("Log selected — press Ctrl+C to copy.", "ok");
     }
+  });
+
+  $("copyurl").addEventListener("click", async (e) => {
+    const b = e.currentTarget;
+    try {
+      await rawInvoke("copy_text", { text: $("vuri").textContent });
+      b.textContent = "Copied";
+      setTimeout(() => (b.textContent = "Copy link"), 1400);
+    } catch (_) { say("Select the link above and copy it.", "err"); }
   });
 
   $("autostart").addEventListener("change", async (e) => {
     const box = e.currentTarget;
     try {
-      const on = await invoke("set_autostart", { enabled: box.checked });
-      box.checked = on;
-      say(on ? "Will start with Windows." : "Auto-start disabled.", "ok");
+      box.checked = await invoke("set_autostart", { enabled: box.checked });
+      say(box.checked ? "Will start with Windows." : "Auto-start disabled.", "ok");
     } catch (err) {
       box.checked = false;
-      say(String(err), "err");
+      fail(String(err));
     }
   });
 
@@ -407,26 +471,13 @@ function wireEvents() {
     try {
       await withBusy(e.currentTarget, "Opening your browser…", async () => {
         say("Contacting the server…");
-        window.__oidc = await invoke("discover", { base });
-        await save(true);
+        cfg.oidc = await invoke("discover", { base });
+        await save();
         await invoke("sign_in");
       });
       say("Waiting for you to finish signing in — check your browser.");
-    } catch (err) {
-      fail(String(err));
-    }
+    } catch (err) { fail(String(err)); }
     refresh();
-  });
-
-  $("copyurl").addEventListener("click", async (e) => {
-    const b = e.currentTarget;
-    try {
-      await rawInvoke("copy_text", { text: $("vuri").textContent });
-      b.textContent = "Copied";
-      setTimeout(() => (b.textContent = "Copy link"), 1400);
-    } catch (_) {
-      say("Select the link above and copy it manually.", "err");
-    }
   });
 
   $("cancel").addEventListener("click", async (e) => {
@@ -446,14 +497,28 @@ function wireEvents() {
     try {
       const rec = await withBusy(e.currentTarget, "Renewing…", () => invoke("renew"), "Renewed");
       say(`Renewed — valid for ${relative(rec.expires_at)}.`, "ok");
-    } catch (err) {
-      fail(String(err));
-    }
+    } catch (err) { fail(String(err)); }
     refresh();
   });
 
-  $("save").addEventListener("click", (e) =>
-    withBusy(e.currentTarget, "Saving…", () => save(false), "Saved").catch(() => {}));
+  $("spotfix").addEventListener("click", async (e) => {
+    try {
+      const s = await withBusy(e.currentTarget, "Applying…", () => invoke("spotify_apply"), "Done");
+      say(
+        s.points_at_us
+          ? (s.running ? "Done — quit Spotify completely and reopen it." : "Done.")
+          : "Written, but Spotify still does not show our proxy. Set it by hand in Spotify → Settings → Proxy.",
+        s.points_at_us ? "ok" : "err"
+      );
+    } catch (err) { fail(String(err)); }
+    paintSpotify();
+  });
+
+  $("spotoff").addEventListener("click", async (e) => {
+    await withBusy(e.currentTarget, "Restoring…", () => invoke("spotify_restore")).catch(() => {});
+    say("Spotify set back to no proxy.");
+    paintSpotify();
+  });
 
   $("toggle").addEventListener("click", async (e) => {
     clearBanner();
@@ -466,7 +531,7 @@ function wireEvents() {
         // Held busy until the tunnel is genuinely up, not until the command
         // returns — start_tunnel only launches the supervisor.
         await withBusy(btn, "Connecting…", async () => {
-          await save(true);
+          await save();
           await invoke("start_tunnel");
           for (let i = 0; i < 40; i++) {
             await new Promise((r) => setTimeout(r, 500));
@@ -477,6 +542,8 @@ function wireEvents() {
           }
           throw new Error("timed out waiting for the tunnel");
         });
+        say("Connected.", "ok");
+        paintSpotify();
       }
       refresh();
     } catch (err) {
@@ -489,28 +556,27 @@ function wireEvents() {
 }
 
 async function loadState() {
-  const v = await invoke("app_version").catch(() => "?");
-  $("ver").textContent = "v" + v;
-  log("ui", "version", v);
+  $("ver").textContent = "v" + (await invoke("app_version").catch(() => "?"));
 
-  const c = await invoke("get_config");
-  window.__oidc = c.oidc || {};
-  $("host").value = c.host;
-  $("user").value = c.user;
-  $("port").value = c.port;
-  $("lport").value = c.local_port;
-  $("key").value = c.key_path;
-  $("base").value = c.enroll_base || "";
-  $("proxy").value = c.proxy || "";
-  $("spot").checked = c.manage_spotify;
-  $("lporth").textContent = c.local_port;
+  cfg = await invoke("get_config");
+  $("host").value = cfg.host || "";
+  $("user").value = cfg.user || "tunnel";
+  $("port").value = cfg.port || 2223;
+  $("lport").value = cfg.local_port || 1080;
+  $("key").value = cfg.key_path || "";
+  $("base").value = cfg.enroll_base || "";
+  $("proxy").value = cfg.proxy || "";
+  $("spot").checked = !!cfg.manage_spotify;
+  $("keeplog").checked = cfg.keep_log !== false;
+  $("updhours").value = String(cfg.update_check_hours ?? 24);
+  $("theme").value = cfg.theme || "system";
+  $("lporth").textContent = cfg.local_port || 1080;
+  applyTheme($("theme").value);
 
   $("autostart").checked = await invoke("autostart_enabled").catch(() => false);
 
   const pag = await invoke("pageant_running").catch(() => false);
-  $("pag").textContent = pag
-    ? "running — reusing your existing agent"
-    : "not running — the bundled agent will be used";
+  $("pag").textContent = pag ? "running" : "not running";
 
   const t = await invoke("tool_paths").catch(() => ({}));
   $("plink").textContent = t.plink || "—";
@@ -523,37 +589,7 @@ async function loadState() {
   }
 }
 
-// ── Updates ───────────────────────────────────────────────────────────────
-let updateDismissed = false;
-
-async function checkUpdate(quiet) {
-  try {
-    const u = await invoke("check_update");
-    $("ver2").textContent = u.current;
-    if (u.available) {
-      $("updver").textContent = `${u.current} → ${u.version}`;
-      $("updstatus").textContent = `${u.version} available`;
-      $("updnow").classList.remove("hidden");
-      // The banner is a nudge, not a fixture: once dismissed it stays gone for
-      // this run, and the menu keeps the action available.
-      if (!updateDismissed) $("update").classList.remove("hidden");
-    } else {
-      $("update").classList.add("hidden");
-      $("updnow").classList.add("hidden");
-      $("updstatus").textContent = `up to date`;
-    }
-    return u;
-  } catch (e) {
-    // A failed check is not worth a banner — on a managed network it usually
-    // just means the proxy was not resolved, which the Diagnose report covers.
-    $("updstatus").textContent = quiet ? "check failed" : String(e);
-    log("ERROR", "check_update", String(e));
-    return null;
-  }
-}
-
 async function boot() {
-  // Order matters: handlers first, so nothing below can leave the UI inert.
   try {
     wireEvents();
   } catch (e) {
@@ -563,14 +599,13 @@ async function boot() {
   try {
     await loadState();
   } catch (e) {
-    fail("Could not load settings: " + e + " — the app still works, check the Log.");
+    fail("Could not load settings: " + e + " — check the Log.");
   }
   refresh();
-  probeServer();
+  paintSpotify();
+  if ($("base").value.trim()) probeServer();
   setInterval(refresh, 2000);
-  // Quiet startup check: surfaces the banner if there is something newer, and
-  // says nothing at all when there is not.
-  checkUpdate(true);
+  if ((cfg.update_check_hours ?? 24) > 0) checkUpdate(true);
 }
 
 window.addEventListener("error", (e) => fail("Script error: " + (e.message || e)));

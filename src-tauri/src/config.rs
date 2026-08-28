@@ -43,6 +43,15 @@ pub struct Config {
     /// WebSocket relay. That ordering matters: direct is faster and has fewer
     /// moving parts, so the relay should only be paid for when it is needed.
     pub transport: String,
+    /// Last proxy that actually carried a request, remembered across restarts
+    /// so a failed WPAD discovery does not send the user back to typing it.
+    pub proxy_last_good: String,
+    /// Keep the in-app log. Off means nothing is recorded at all.
+    pub keep_log: bool,
+    /// How often to check for updates, in hours. 0 disables checking.
+    pub update_check_hours: u32,
+    /// "system", "dark" or "light".
+    pub theme: String,
     /// Local port the relay listens on for ssh to dial.
     pub relay_port: u16,
 }
@@ -61,6 +70,10 @@ impl Default for Config {
             oidc: OidcSettings::default(),
             proxy: String::new(),
             transport: "auto".into(),
+            proxy_last_good: String::new(),
+            keep_log: true,
+            update_check_hours: 24,
+            theme: "system".into(),
             relay_port: 12223,
         }
     }
