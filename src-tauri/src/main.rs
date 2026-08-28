@@ -44,12 +44,18 @@ struct App {
     cancel_signin: Arc<AtomicBool>,
 }
 
+// NOTE ON THREADING: a synchronous `#[tauri::command]` runs on the MAIN
+// thread, which is the same thread that drives the webview. Any command doing
+// network, subprocess or disk work therefore freezes the window for its whole
+// duration — a 12-second HTTP timeout froze typing for 12 seconds. Everything
+// that can block is declared `#[tauri::command(async)]`, which Tauri runs on a
+// worker thread. Only cheap in-memory reads stay synchronous below.
 #[tauri::command]
 fn get_config(app: State<App>) -> Config {
     app.cfg.lock().unwrap().clone()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn save_config(app: State<App>, cfg: Config) -> Result<(), String> {
     cfg.save(&app.dir)?;
     *app.cfg.lock().unwrap() = cfg;
@@ -61,7 +67,7 @@ fn get_status(app: State<App>) -> Status {
     app.sup.status()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pageant_running() -> bool {
     pageant::is_running()
 }
@@ -69,7 +75,7 @@ fn pageant_running() -> bool {
 /// Which SSH tools will actually be used — surfaced in the UI so it is obvious
 /// whether the user's own PuTTY, the bundled copy, or Windows' own OpenSSH is
 /// in play.
-#[tauri::command]
+#[tauri::command(async)]
 fn tool_paths(app: State<App>) -> serde_json::Value {
     let ssh = tunnel::openssh_path();
     serde_json::json!({
@@ -86,7 +92,7 @@ fn tool_paths(app: State<App>) -> serde_json::Value {
 ///
 /// This is what lets a new user type one URL instead of four fields. None of
 /// it is secret: a public OAuth client holds no secret by design.
-#[tauri::command]
+#[tauri::command(async)]
 fn discover(app: State<App>, base: String) -> Result<OidcSettings, String> {
     let mut cfg = app.cfg.lock().unwrap().clone();
     cfg.enroll_base = base.trim().to_string();
@@ -136,7 +142,7 @@ struct ServerProbe {
 
 /// Probe `<base>/config`. Deliberately reports *why* it failed: "unreachable"
 /// with no reason is the thing that makes people re-type a correct address.
-#[tauri::command]
+#[tauri::command(async)]
 fn check_server(app: State<App>, base: String) -> ServerProbe {
     let mut cfg = app.cfg.lock().unwrap().clone();
     cfg.enroll_base = base.trim().to_string();
@@ -214,7 +220,7 @@ fn check_server(app: State<App>, base: String) -> ServerProbe {
 
 /// Everything needed to diagnose "nothing happens when I press things"
 /// without asking the user to find a log file. Shown in the app's Log panel.
-#[tauri::command]
+#[tauri::command(async)]
 fn diagnostics(app: State<App>) -> serde_json::Value {
     let cfg = app.cfg.lock().unwrap().clone();
     let ssh = tunnel::openssh_path();
@@ -247,7 +253,7 @@ fn diagnostics(app: State<App>) -> serde_json::Value {
 /// Run a full connectivity report. Exists so a network problem can be
 /// identified from inside the app instead of asking the user to run shell
 /// commands they will reasonably not run.
-#[tauri::command]
+#[tauri::command(async)]
 fn network_test(app: State<App>) -> Vec<net::Check> {
     let cfg = app.cfg.lock().unwrap().clone();
     let host = cfg
@@ -261,7 +267,7 @@ fn network_test(app: State<App>) -> Vec<net::Check> {
     net::connectivity_report(&host, cfg.port, &cfg.proxy)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[cfg(windows)]
 fn copy_text(text: String) -> Result<(), String> {
     use std::io::Write;
@@ -282,7 +288,7 @@ fn copy_text(text: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[cfg(not(windows))]
 fn copy_text(_text: String) -> Result<(), String> {
     Err("clipboard not supported on this platform".into())
@@ -299,7 +305,7 @@ fn auth_state(app: State<App>) -> AuthState {
 }
 
 /// Start a device-flow sign-in, then enrol, all on a background thread.
-#[tauri::command]
+#[tauri::command(async)]
 fn sign_in(app: State<App>) -> Result<DevicePrompt, String> {
     let cfg = app.cfg.lock().unwrap().clone();
     if !cfg.oidc.is_complete() {
@@ -356,7 +362,7 @@ fn cancel_sign_in(app: State<App>) {
     *app.auth.lock().unwrap() = AuthState::SignedOut;
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn sign_out(app: State<App>) {
     app.cancel_signin.store(true, Ordering::SeqCst);
     app.sup.stop();
@@ -365,7 +371,7 @@ fn sign_out(app: State<App>) {
     *app.auth.lock().unwrap() = AuthState::SignedOut;
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn enrollment(app: State<App>) -> Option<Enrollment> {
     Enrollment::load(&app.dir)
 }
@@ -383,7 +389,7 @@ fn renew_quietly(dir: &PathBuf, cfg: &Config) -> Result<Enrollment, String> {
     enroll::enroll(&agent, dir, &cfg.enroll_url(), &fresh)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn renew(app: State<App>) -> Result<Enrollment, String> {
     let cfg = app.cfg.lock().unwrap().clone();
     renew_quietly(&app.dir, &cfg)
@@ -391,7 +397,7 @@ fn renew(app: State<App>) -> Result<Enrollment, String> {
 
 // ── Tunnel ────────────────────────────────────────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 fn start_tunnel(app: State<App>) -> Result<(), String> {
     let mut cfg = app.cfg.lock().unwrap().clone();
 
@@ -486,7 +492,7 @@ fn start_tunnel(app: State<App>) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn stop_tunnel(app: State<App>) -> Result<(), String> {
     app.sup.stop();
     if app.cfg.lock().unwrap().manage_spotify {
@@ -495,12 +501,12 @@ fn stop_tunnel(app: State<App>) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn socks_ok(app: State<App>) -> bool {
     tunnel::socks_healthy(app.cfg.lock().unwrap().local_port)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_autostart(enabled: bool) -> Result<bool, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     if enabled {
@@ -511,7 +517,7 @@ fn set_autostart(enabled: bool) -> Result<bool, String> {
     Ok(autostart::is_enabled())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn autostart_enabled() -> bool {
     autostart::is_enabled()
 }

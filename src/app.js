@@ -145,6 +145,14 @@ function readForm() {
   };
 }
 
+let saveTimer = null;
+
+/** Save after typing settles. One write per pause instead of per keystroke. */
+function saveSoon() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => save(true), 400);
+}
+
 async function save(quiet) {
   try {
     await invoke("save_config", { cfg: readForm() });
@@ -164,6 +172,7 @@ function relative(ts) {
 
 // ── Server reachability ───────────────────────────────────────────────────
 let probeTimer = null;
+let probeSeq = 0;
 
 function setDot(state, text) {
   $("srvdot").className = "dot " + state;
@@ -177,8 +186,12 @@ async function probeServer() {
   const base = $("base").value.trim();
   if (!base) return setDot("idle", "Enter your tunnel server address");
   setDot("checking", "Checking…");
+  const mine = ++probeSeq;
   try {
     const r = await invoke("check_server", { base });
+    // A probe for a half-typed address can land after the real one. Only the
+    // most recent request is allowed to paint.
+    if (mine !== probeSeq) return;
     if (r.reachable) {
       setDot("up", `Online · sign in via ${r.issuer} · access lasts ${r.cert_ttl}`);
       clearBanner();
@@ -187,11 +200,11 @@ async function probeServer() {
       if (r.raw) log("ERROR", "check_server raw", r.raw);
     }
   } catch (e) {
-    setDot("down", String(e));
+    if (mine === probeSeq) setDot("down", String(e));
   }
 }
 
-function scheduleProbe(delay = 700) {
+function scheduleProbe(delay = 900) {
   clearTimeout(probeTimer);
   setDot("checking", "Checking…");
   probeTimer = setTimeout(probeServer, delay);
@@ -274,11 +287,11 @@ async function refresh() {
  * loading state fails.
  */
 function wireEvents() {
-  F.forEach((id) => $(id).addEventListener("input", () => save(true)));
+  F.forEach((id) => $(id).addEventListener("input", saveSoon));
   $("lport").addEventListener("input", () => ($("lporth").textContent = $("lport").value));
   $("spot").addEventListener("change", () => save(true));
 
-  $("base").addEventListener("input", () => { save(true); scheduleProbe(); });
+  $("base").addEventListener("input", () => { saveSoon(); scheduleProbe(); });
   $("recheck").addEventListener("click", (e) =>
     withBusy(e.currentTarget, "Checking…", probeServer).catch(() => {}));
 
