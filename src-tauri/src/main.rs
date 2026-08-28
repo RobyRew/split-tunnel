@@ -370,6 +370,73 @@ fn sign_in(app: State<App>) -> Result<DevicePrompt, String> {
     Ok(prompt)
 }
 
+/// Browser redirect flow. Returns a prompt so the UI can show the same
+/// "finish in your browser" card the device flow uses.
+fn sign_in_authcode(app: State<App>, cfg: Config) -> Result<DevicePrompt, String> {
+    let port = cfg.oidc.redirect_port;
+    let redirect = auth::redirect_uri(port);
+    let p = auth::pkce();
+    let url = auth::authorize_url(&cfg.oidc, &redirect, &p);
+
+    auth::open_in_browser(&url);
+
+    let prompt = DevicePrompt {
+        user_code: String::new(),
+        verification_uri: url.clone(),
+        verification_uri_complete: url,
+        expires_in: 300,
+        device_code: String::new(),
+        interval: 1,
+    };
+    *app.auth.lock().unwrap() = AuthState::Waiting(prompt.clone());
+    app.cancel_signin.store(false, Ordering::SeqCst);
+
+    let state = Arc::clone(&app.auth);
+    let cancel = Arc::clone(&app.cancel_signin);
+    let dir = app.dir.clone();
+    let verifier = p.verifier;
+    let expect_state = p.state;
+
+    std::thread::spawn(move || {
+        let cancelled = || cancel.load(Ordering::SeqCst);
+        let code = match auth::await_code(port, &expect_state, 300, &cancelled) {
+            Ok(c) => c,
+            Err(e) => {
+                *state.lock().unwrap() = AuthState::Failed(e);
+                return;
+            }
+        };
+        let agent = net::agent_for(&cfg.proxy, &cfg.oidc.issuer, 20);
+        let tokens = match auth::exchange_code(&agent, &cfg.oidc, &redirect, &code, &verifier) {
+            Ok(t) => t,
+            Err(e) => {
+                *state.lock().unwrap() = AuthState::Failed(e);
+                return;
+            }
+        };
+        if let Err(e) = tokens.save(&dir) {
+            *state.lock().unwrap() = AuthState::Failed(e);
+            return;
+        }
+        *state.lock().unwrap() = AuthState::Enrolling;
+        match enroll::enroll(&agent, &dir, &cfg.enroll_url(), &tokens) {
+            Ok(rec) => {
+                *state.lock().unwrap() = AuthState::SignedIn {
+                    email: if rec.identity.is_empty() {
+                        tokens.email.clone()
+                    } else {
+                        rec.identity.clone()
+                    },
+                    expires_at: rec.expires_at,
+                }
+            }
+            Err(e) => *state.lock().unwrap() = AuthState::Failed(e),
+        }
+    });
+
+    Ok(prompt)
+}
+
 #[tauri::command]
 fn cancel_sign_in(app: State<App>) {
     app.cancel_signin.store(true, Ordering::SeqCst);
