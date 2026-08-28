@@ -257,6 +257,9 @@ async function paintAuth() {
     $("codehint").classList.toggle("hidden", !hasCode);
     if (hasCode) $("ucode").textContent = d.user_code;
     $("vuri").textContent = d.verification_uri || "—";
+    // Selectable, so a browser that refuses to open can be worked around by
+    // copying the link rather than being stuck.
+    $("copyurl").classList.toggle("hidden", !d.verification_uri);
     $("waitmsg").textContent = hasCode
       ? "A browser window should have opened. If it did not, go to this address and enter the code:"
       : "A browser window should have opened — sign in there, then come back. If it did not open, use this link:";
@@ -373,6 +376,17 @@ function wireEvents() {
       fail(String(err));
     }
     refresh();
+  });
+
+  $("copyurl").addEventListener("click", async (e) => {
+    const b = e.currentTarget;
+    try {
+      await rawInvoke("copy_text", { text: $("vuri").textContent });
+      b.textContent = "Copied";
+      setTimeout(() => (b.textContent = "Copy link"), 1400);
+    } catch (_) {
+      say("Select the link above and copy it manually.", "err");
+    }
   });
 
   $("cancel").addEventListener("click", async (e) => {

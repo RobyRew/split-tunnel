@@ -352,12 +352,25 @@ pub fn open_in_browser(url: &str) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        // The empty "" is cmd's window-title argument. Omitting it makes cmd
-        // treat a quoted URL as the title and open nothing at all.
-        let _ = std::process::Command::new("cmd")
-            .args(["/C", "start", "", url])
+
+        // NOT `cmd /C start`. cmd treats `&` as a command separator, so it
+        // truncates any URL at the first parameter boundary — the OAuth
+        // request reached Logto carrying only `client_id`, and was rejected as
+        // invalid_request. The device flow hid this for weeks because its
+        // verification URL has a single parameter and no `&` at all.
+        //
+        // rundll32 and explorer are ordinary programs, so Rust passes the URL
+        // as one argv element and no shell ever parses it.
+        let spawned = std::process::Command::new("rundll32.exe")
+            .args(["url.dll,FileProtocolHandler", url])
             .creation_flags(0x0800_0000)
             .spawn();
+        if spawned.is_err() {
+            let _ = std::process::Command::new("explorer.exe")
+                .arg(url)
+                .creation_flags(0x0800_0000)
+                .spawn();
+        }
     }
     #[cfg(target_os = "macos")]
     {
