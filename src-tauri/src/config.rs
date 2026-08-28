@@ -52,6 +52,8 @@ pub struct Config {
     pub update_check_hours: u32,
     /// "system", "dark" or "light".
     pub theme: String,
+    /// "windows" to follow the Windows accent colour, or a "#rrggbb" literal.
+    pub accent: String,
     /// Local port the relay listens on for ssh to dial.
     pub relay_port: u16,
 }
@@ -74,6 +76,7 @@ impl Default for Config {
             keep_log: true,
             update_check_hours: 24,
             theme: "system".into(),
+            accent: "windows".into(),
             relay_port: 12223,
         }
     }

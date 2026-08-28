@@ -162,6 +162,12 @@ fn connected_apps(app: State<App>) -> Vec<tunnel::ClientApp> {
     tunnel::connected_apps(port)
 }
 
+/// The Windows accent colour, so the app can match the rest of the desktop.
+#[tauri::command(async)]
+fn system_accent() -> Option<String> {
+    net::windows_accent()
+}
+
 #[tauri::command]
 fn get_config(app: State<App>) -> Config {
     app.cfg.lock().unwrap().clone()
@@ -824,6 +830,7 @@ fn main() {
             spotify_apply,
             spotify_restore,
             connected_apps,
+            system_accent,
             sign_in,
             cancel_sign_in,
             sign_out,

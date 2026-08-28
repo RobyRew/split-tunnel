@@ -37,6 +37,14 @@
         <option value="dark">Dark</option>
         <option value="light">Light</option>
       </select></label>
+    <label class="menu-field">Accent
+      <select id="accent">
+        <option value="windows">Match Windows</option>
+        <option value="#10b981">Green</option>
+        <option value="#3b82f6">Blue</option>
+        <option value="#8b5cf6">Purple</option>
+        <option value="#f97316">Orange</option>
+      </select></label>
 
     <div class="menu-sec">Updates</div>
     <div class="menu-row"><span>Version</span><b id="ver2">—</b></div>
@@ -66,23 +74,18 @@
       <button id="upddismiss" class="link" title="Dismiss">✕</button>
     </div>
 
-    <!-- STEP 1 — first run. One field, nothing else on screen. -->
+    <!-- Setup and sign-in are ONE card. Splitting them hid the address field
+         as soon as anything was typed, so a typo could not be corrected. -->
     <section class="card hidden" id="card-setup">
-      <h2>Set up</h2>
-      <p class="lead">Enter the address your administrator gave you.</p>
+      <h2>Get started</h2>
+      <p class="lead">Enter the address your administrator gave you, then sign
+        in. Your key is created on this PC and never leaves it.</p>
       <input id="base" placeholder="tunnel.example.com" autocomplete="off" spellcheck="false" />
       <div class="srv">
         <span id="srvdot" class="dot idle"></span>
         <span id="srvtext" class="srvtext idle">Waiting for an address…</span>
         <button id="recheck" class="link">Retry</button>
       </div>
-    </section>
-
-    <!-- STEP 2 — sign in -->
-    <section class="card hidden" id="card-signin">
-      <h2>Sign in</h2>
-      <p class="lead">Use the account you were authorised with. Your key is
-        created on this PC and never leaves it.</p>
       <button id="signin" class="primary wide" disabled>Sign in</button>
     </section>
 

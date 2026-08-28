@@ -434,6 +434,13 @@ pub struct ClientApp {
     pub name: String,
     pub pid: u32,
     pub connections: u32,
+    /// Local source ports of each live connection.
+    ///
+    /// NOT the destinations. A SOCKS request names its target INSIDE the
+    /// protocol stream, so from the outside every one of these looks like a
+    /// connection to our own listener. Showing the real hostnames would mean
+    /// this app terminating SOCKS itself instead of handing it to ssh.
+    pub ports: Vec<u16>,
 }
 
 /// Which applications are actually using the tunnel right now.
@@ -462,7 +469,7 @@ pub fn connected_apps(local_port: u16) -> Vec<ClientApp> {
     // listener's own accepted sockets appear with it as the local end, which
     // would count the tunnel process itself rather than its clients.
     let needle = format!("127.0.0.1:{local_port}");
-    let mut by_pid: HashMap<u32, u32> = HashMap::new();
+    let mut by_pid: HashMap<u32, Vec<u16>> = HashMap::new();
     for line in out.lines() {
         if !line.contains("ESTABLISHED") {
             continue;
@@ -472,7 +479,8 @@ pub fn connected_apps(local_port: u16) -> Vec<ClientApp> {
             continue;
         }
         if let Ok(pid) = f[4].parse::<u32>() {
-            *by_pid.entry(pid).or_insert(0) += 1;
+            let local_port = f[1].rsplit(':').next().and_then(|p| p.parse().ok()).unwrap_or(0);
+            by_pid.entry(pid).or_default().push(local_port);
         }
     }
     if by_pid.is_empty() {
@@ -499,10 +507,14 @@ pub fn connected_apps(local_port: u16) -> Vec<ClientApp> {
 
     let mut apps: Vec<ClientApp> = by_pid
         .into_iter()
-        .map(|(pid, connections)| ClientApp {
-            name: names.get(&pid).cloned().unwrap_or_else(|| format!("PID {pid}")),
-            pid,
-            connections,
+        .map(|(pid, mut ports)| {
+            ports.sort_unstable();
+            ClientApp {
+                name: names.get(&pid).cloned().unwrap_or_else(|| format!("PID {pid}")),
+                pid,
+                connections: ports.len() as u32,
+                ports,
+            }
         })
         .collect();
     apps.sort_by(|a, b| b.connections.cmp(&a.connections));

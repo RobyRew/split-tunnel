@@ -388,3 +388,36 @@ pub fn connectivity_report(base_host: &str, tunnel_port: u16, proxy_override: &s
     }
     out
 }
+
+/// The Windows accent colour, as "#rrggbb".
+///
+/// `ColorizationColor` is the DWM accent, stored as an AARRGGBB DWORD. The
+/// alpha byte is the glass opacity rather than a real alpha and is discarded.
+#[cfg(windows)]
+pub fn windows_accent() -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    let out = std::process::Command::new("reg")
+        .args([
+            "query",
+            r"HKCU\Software\Microsoft\Windows\DWM",
+            "/v",
+            "ColorizationColor",
+        ])
+        .creation_flags(0x0800_0000)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let tok = text
+        .split_whitespace()
+        .find(|t| t.starts_with("0x") && t.len() > 4)?;
+    let v = u32::from_str_radix(tok.trim_start_matches("0x"), 16).ok()?;
+    Some(format!("#{:06x}", v & 0x00FF_FFFF))
+}
+
+#[cfg(not(windows))]
+pub fn windows_accent() -> Option<String> {
+    None
+}

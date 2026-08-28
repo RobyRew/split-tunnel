@@ -139,6 +139,7 @@ function readForm() {
     keep_log: $("keeplog").checked,
     update_check_hours: parseInt($("updhours").value, 10) || 0,
     theme: $("theme").value,
+    accent: $("accent").value,
     oidc: cfg.oidc || {},
   };
 }
@@ -164,6 +165,38 @@ function relative(ts) {
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+/** Lighten a hex colour, for the gradient's second stop. */
+function lighten(hex, amount) {
+  const n = parseInt(hex.replace("#", ""), 16);
+  const mix = (c) => Math.round(c + (255 - c) * amount);
+  return (
+    "#" +
+    [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+      .map((c) => mix(c).toString(16).padStart(2, "0"))
+      .join("")
+  );
+}
+
+/** Is this colour dark enough to need white text on it? */
+function needsLightInk(hex) {
+  const n = parseInt(hex.replace("#", ""), 16);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  return 0.299 * r + 0.587 * g + 0.114 * b < 150;
+}
+
+async function applyAccent(choice) {
+  let hex = choice;
+  if (choice === "windows") {
+    hex = (await rawInvoke("system_accent").catch(() => null)) || "#10b981";
+  }
+  if (!/^#[0-9a-f]{6}$/i.test(hex)) hex = "#10b981";
+  const root = document.documentElement.style;
+  root.setProperty("--accent", hex);
+  root.setProperty("--accent2", lighten(hex, 0.28));
+  // The primary button's label sits on the accent, so it has to follow it.
+  root.setProperty("--ink", needsLightInk(hex) ? "#ffffff" : "#04120d");
 }
 
 // ── Theme ─────────────────────────────────────────────────────────────────
@@ -234,12 +267,12 @@ function paintStatus(status) {
 
 /** Which step of the flow the window should be showing. */
 function paintSteps(state) {
-  const haveServer = !!(cfg.enroll_base || "").trim();
   const waiting = state === "Waiting";
   signedIn = state === "SignedIn";
 
-  show("card-setup", !signedIn && !waiting && !haveServer);
-  show("card-signin", !signedIn && !waiting && haveServer);
+  // Always visible until signed in, so a mistyped address can be corrected.
+  // Previously it vanished the moment anything was typed.
+  show("card-setup", !signedIn && !waiting);
   show("card-waiting", waiting);
   show("card-ready", signedIn);
   show("card-apps", signedIn);
@@ -302,11 +335,20 @@ async function paintApps() {
     return;
   }
   $("applist").innerHTML = apps
-    .map(
-      (a) =>
-        `<div class="app"><span class="appname">${a.name}</span>` +
-        `<span class="hint">${a.connections} connection${a.connections === 1 ? "" : "s"}</span></div>`
-    )
+    .map((a) => {
+      const ports = (a.ports || []).join(", ");
+      return (
+        `<details class="app"><summary><span class="appname">${a.name}</span>` +
+        `<span class="hint">${a.connections} connection${a.connections === 1 ? "" : "s"}</span></summary>` +
+        `<div class="appdetail"><div>PID ${a.pid}</div>` +
+        `<div>Local ports: ${ports || "—"}</div>` +
+        // Being straight about the limit rather than showing a blank field:
+        // a SOCKS request names its target inside the stream, so the
+        // destination is not visible from outside the connection.
+        `<div class="hint">Destinations are inside the SOCKS stream and are ` +
+        `not visible from here.</div></div></details>`
+      );
+    })
     .join("");
 }
 
@@ -378,6 +420,7 @@ function wireEvents() {
   ["spot", "keeplog"].forEach((id) => $(id).addEventListener("change", save));
   $("updhours").addEventListener("change", save);
   $("theme").addEventListener("change", () => { applyTheme($("theme").value); save(); });
+  $("accent").addEventListener("change", () => { applyAccent($("accent").value); save(); });
 
   const closeMenu = () => $("settings").classList.add("hidden");
   $("gear").addEventListener("click", (e) => {
@@ -570,8 +613,10 @@ async function loadState() {
   $("keeplog").checked = cfg.keep_log !== false;
   $("updhours").value = String(cfg.update_check_hours ?? 24);
   $("theme").value = cfg.theme || "system";
+  $("accent").value = cfg.accent || "windows";
   $("lporth").textContent = cfg.local_port || 1080;
   applyTheme($("theme").value);
+  await applyAccent($("accent").value);
 
   $("autostart").checked = await invoke("autostart_enabled").catch(() => false);
 

@@ -1,15 +1,13 @@
 //! Point Spotify's own proxy setting at our local SOCKS listener.
 //!
-//! Spotify keeps preferences in a flat `key=value` file. Two details matter and
-//! both were wrong in the first version:
+//! Spotify keeps preferences in a flat `key=value` file, and the exact shape
+//! was taken from a working installation rather than guessed — see MODE_PROXY.
+//! Spotify silently ignores keys it does not recognise and unquoted strings, so
+//! a wrong guess looks exactly like the feature doing nothing.
 //!
-//!   * the key is `network.proxy.addr`, not `network.proxy.address`
-//!   * string values are QUOTED (`addr="127.0.0.1"`), numbers are not
-//!
-//! Spotify ignores keys it does not recognise and silently ignores an unquoted
-//! string, so a wrong guess here looks exactly like the feature doing nothing.
-//! Because of that this module also READS the file back, so the UI can state
-//! what Spotify is actually configured with rather than what we hoped to set.
+//! This module therefore READS THE FILE BACK and reports what Spotify is
+//! actually configured with. The first attempt did check itself, but against
+//! its own wrong expectation, which is worse than not checking at all.
 //!
 //! Spotify reads prefs only at startup. Changing them while it runs has no
 //! effect until it is fully quit — not just closed to the tray.
@@ -17,9 +15,17 @@
 use serde::Serialize;
 use std::path::PathBuf;
 
-/// `network.proxy.mode` values, as ordered in Spotify's own dropdown.
-/// 0 = No proxy, 1 = HTTP, 2 = SOCKS4, 3 = SOCKS5, 4 = auto-detect.
-pub const MODE_SOCKS5: i32 = 3;
+/// Taken from a working installation rather than guessed. Spotify stores the
+/// whole endpoint in ONE key:
+///
+///     network.proxy.addr="127.0.0.1:1080@socks5"
+///     network.proxy.mode=4
+///
+/// There is no `network.proxy.port` key at all, and the mode for a manual
+/// SOCKS5 proxy is 4. The first version wrote mode 3, a bare address and a
+/// separate port — and then "verified" the result against its own wrong
+/// expectation, which is worse than not checking.
+pub const MODE_PROXY: i32 = 4;
 pub const MODE_NONE: i32 = 0;
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -104,11 +110,20 @@ pub fn state(local_port: u16) -> SpotifyState {
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     s.addr = get_key(&body, "network.proxy.addr").unwrap_or_default();
-    s.port = get_key(&body, "network.proxy.port")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    s.points_at_us =
-        s.mode == MODE_SOCKS5 && s.port == local_port && (s.addr == "127.0.0.1" || s.addr == "localhost");
+    // "127.0.0.1:1080@socks5" — split off the scheme, then the port.
+    let (hostport, scheme) = match s.addr.split_once('@') {
+        Some((hp, sc)) => (hp.to_string(), sc.to_string()),
+        None => (s.addr.clone(), String::new()),
+    };
+    let (host, port) = match hostport.rsplit_once(':') {
+        Some((h, p)) => (h.to_string(), p.parse::<u16>().unwrap_or(0)),
+        None => (hostport.clone(), 0),
+    };
+    s.port = port;
+    s.points_at_us = s.mode == MODE_PROXY
+        && port == local_port
+        && scheme.eq_ignore_ascii_case("socks5")
+        && (host == "127.0.0.1" || host == "localhost");
     s
 }
 
@@ -127,10 +142,13 @@ pub fn apply(local_port: u16) -> Result<SpotifyState, String> {
         std::fs::copy(&p, &backup).map_err(|e| e.to_string())?;
     }
     let body = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
-    let body = set_key(&body, "network.proxy.mode", &MODE_SOCKS5.to_string());
-    // Quoted: Spotify treats an unquoted string as absent.
-    let body = set_key(&body, "network.proxy.addr", "\"127.0.0.1\"");
-    let body = set_key(&body, "network.proxy.port", &local_port.to_string());
+    let body = set_key(&body, "network.proxy.mode", &MODE_PROXY.to_string());
+    // One key carries host, port and scheme, and it must be quoted.
+    let body = set_key(
+        &body,
+        "network.proxy.addr",
+        &format!("\"127.0.0.1:{local_port}@socks5\""),
+    );
     std::fs::write(&p, body).map_err(|e| e.to_string())?;
     Ok(state(local_port))
 }
