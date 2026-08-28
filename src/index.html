@@ -26,6 +26,13 @@
 
   <main>
     <div id="banner" class="banner hidden"></div>
+
+    <!-- Shown only when a newer signed build exists. -->
+    <div id="update" class="update hidden">
+      <div><b>Update available</b> <span id="updver"></span>
+        <div class="hint" id="updnote">This install will be replaced and the app restarted.</div></div>
+      <button id="updnow" class="primary">Update</button>
+    </div>
     <!-- Signed out: the only thing to fill in is the server address. -->
     <section class="card" id="card-signin">
       <h2>Account</h2>
@@ -98,6 +105,8 @@
       <p>Pageant: <b id="pag">checking…</b></p>
       <p class="path">ssh: <span id="ssh">—</span></p>
       <p class="path">plink: <span id="plink">—</span></p>
+      <button id="checkupd" class="link">Check for updates</button>
+      <span id="updstatus" class="hint"></span>
     </details>
 
     <details class="card muted" id="card-log">

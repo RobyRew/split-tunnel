@@ -50,6 +50,70 @@ struct App {
 // duration — a 12-second HTTP timeout froze typing for 12 seconds. Everything
 // that can block is declared `#[tauri::command(async)]`, which Tauri runs on a
 // worker thread. Only cheap in-memory reads stay synchronous below.
+/// What an update check found. Kept deliberately small: the UI only needs to
+/// know whether to offer the button and what version it would install.
+#[derive(Serialize, Clone, Debug)]
+struct UpdateInfo {
+    available: bool,
+    current: String,
+    version: String,
+    notes: String,
+}
+
+/// Ask the release feed whether a newer signed build exists.
+///
+/// The signature is checked by the plugin against the public key baked into
+/// tauri.conf.json, so an update that was tampered with — or served from
+/// somewhere else entirely — is refused before anything is written to disk.
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let current = app.package_info().version.to_string();
+    let updater = app.updater().map_err(|e| format!("updater unavailable: {e}"))?;
+    match updater.check().await {
+        Ok(Some(u)) => Ok(UpdateInfo {
+            available: true,
+            current,
+            version: u.version.clone(),
+            notes: u.body.clone().unwrap_or_default(),
+        }),
+        Ok(None) => Ok(UpdateInfo {
+            available: false,
+            current: current.clone(),
+            version: current,
+            notes: String::new(),
+        }),
+        Err(e) => Err(format!("could not check for updates: {e}")),
+    }
+}
+
+/// Download, verify and install the update, then restart into it.
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let updater = app.updater().map_err(|e| format!("updater unavailable: {e}"))?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| format!("could not check for updates: {e}"))?
+        .ok_or("no update available")?;
+
+    update
+        .download_and_install(|_chunk, _total| {}, || {})
+        .await
+        .map_err(|e| format!("update failed: {e}"))?;
+
+    // The installer has replaced the binary; restart so the user is actually
+    // running the version they just installed.
+    //
+    // `restart()` diverges (returns `!`), which makes the Ok below unreachable
+    // — written this way so the function typechecks whichever signature the
+    // Tauri version in use has, rather than betting on it.
+    app.restart();
+    #[allow(unreachable_code)]
+    Ok(())
+}
+
 #[tauri::command]
 fn get_config(app: State<App>) -> Config {
     app.cfg.lock().unwrap().clone()
@@ -605,6 +669,7 @@ fn autostart_enabled() -> bool {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let dir = app
                 .path()
@@ -692,6 +757,8 @@ fn main() {
             app_version,
             copy_text,
             network_test,
+            check_update,
+            install_update,
             sign_in,
             cancel_sign_in,
             sign_out,

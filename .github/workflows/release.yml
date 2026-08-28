@@ -65,6 +65,12 @@ jobs:
         run: cargo install tauri-cli --version "^2.0" --locked
 
       - name: Build installer
+        env:
+          # Signs the update artifacts. The matching public key is baked into
+          # tauri.conf.json, and the installed app refuses any update whose
+          # signature does not verify against it.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: cargo tauri build
 
       # The app is useless without plink, and a silently-missing resource would
@@ -102,9 +108,38 @@ jobs:
           name: SplitTunnel-installer
           path: dist/*.exe
 
+      # The updater feed. The app fetches this, compares versions, downloads the
+      # named installer and verifies `signature` before installing anything.
+      - name: Build the update manifest
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          $sig = "$($exe.FullName).sig"
+          if (-not (Test-Path $sig)) {
+            throw "no .sig beside $($exe.Name) - the signing key was probably not set, and an unsigned release is silently un-updatable"
+          }
+          $version = "${{ github.ref_name }}" -replace '^v',''
+          $manifest = [ordered]@{
+            version   = $version
+            notes     = "See the release notes for $version."
+            pub_date  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{
+                signature = (Get-Content $sig -Raw).Trim()
+                url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$($exe.Name)"
+              }
+            }
+          }
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content dist/latest.json -Encoding utf8
+          Write-Host "--- latest.json ---"
+          Get-Content dist/latest.json
+
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.exe
+          files: |
+            dist/*.exe
+            dist/latest.json
           generate_release_notes: true

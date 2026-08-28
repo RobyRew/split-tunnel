@@ -1,6 +1,6 @@
 [package]
 name = "split-tunnel"
-version = "0.4.2"
+version = "0.5.0"
 description = "Route a single Windows application through your own VPS over SOCKS5"
 authors = ["RobyRew"]
 edition = "2021"
@@ -13,6 +13,11 @@ tauri-build = { version = "2", features = [] }
 # can break, and this program's job is small: supervise one child process.
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
+
+# In-app updates. Each release is signed with our own key and the app refuses
+# an update whose signature does not verify, so a tampered or mirrored binary
+# cannot be installed even if the download is intercepted.
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

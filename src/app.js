@@ -323,6 +323,24 @@ function wireEvents() {
     }
   });
 
+  $("checkupd").addEventListener("click", (e) => {
+    $("updstatus").textContent = "checking…";
+    withBusy(e.currentTarget, "Checking…", () => checkUpdate(false)).catch(() => {});
+  });
+
+  $("updnow").addEventListener("click", async (e) => {
+    try {
+      await withBusy(e.currentTarget, "Updating…", async () => {
+        say("Downloading and verifying the update…");
+        // The app restarts itself on success, so there is no "done" state to
+        // paint here — control does not come back.
+        await invoke("install_update");
+      });
+    } catch (err) {
+      fail(`Update failed: ${err}`);
+    }
+  });
+
   $("copylog").addEventListener("click", async (e) => {
     const b = e.currentTarget;
     const text = $("logbox").textContent;
@@ -483,6 +501,28 @@ async function loadState() {
   }
 }
 
+// ── Updates ───────────────────────────────────────────────────────────────
+async function checkUpdate(quiet) {
+  try {
+    const u = await invoke("check_update");
+    if (u.available) {
+      $("updver").textContent = `${u.current} → ${u.version}`;
+      $("update").classList.remove("hidden");
+      if (!quiet) $("updstatus").textContent = `version ${u.version} is available`;
+    } else {
+      $("update").classList.add("hidden");
+      if (!quiet) $("updstatus").textContent = `up to date (${u.current})`;
+    }
+    return u;
+  } catch (e) {
+    // A failed check is not worth a banner — it usually just means the
+    // network is unavailable, which the user already knows.
+    if (!quiet) $("updstatus").textContent = String(e);
+    log("ERROR", "check_update", String(e));
+    return null;
+  }
+}
+
 async function boot() {
   // Order matters: handlers first, so nothing below can leave the UI inert.
   try {
@@ -499,6 +539,9 @@ async function boot() {
   refresh();
   probeServer();
   setInterval(refresh, 2000);
+  // Quiet startup check: surfaces the banner if there is something newer, and
+  // says nothing at all when there is not.
+  checkUpdate(true);
 }
 
 window.addEventListener("error", (e) => fail("Script error: " + (e.message || e)));

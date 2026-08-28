@@ -127,3 +127,15 @@ button.primary .spin{border-color:rgba(0,0,0,.22);border-top-color:#04120d}
   -webkit-user-select:text;user-select:text;
 }
 #card-log summary .hint{display:inline;margin:0;text-transform:none;letter-spacing:0}
+
+/* ── Update banner ───────────────────────────────────────────────────────
+   Deliberately at the top and unmissable: an update that nobody notices is
+   the same as no updater at all. */
+.update{
+  display:flex;align-items:center;gap:12px;justify-content:space-between;
+  background:#0e2119;border:1px solid #12402f;border-radius:10px;
+  padding:11px 12px;font-size:13px;
+}
+.update .hint{margin:3px 0 0}
+.update button{flex:none;width:auto;padding:8px 16px}
+#updstatus{display:block;margin-top:7px}
