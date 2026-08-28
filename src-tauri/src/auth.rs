@@ -496,6 +496,9 @@ pub fn await_code(
                 let mut code = String::new();
                 let mut state = String::new();
                 let mut err = String::new();
+                // The description is the only part that says WHY. Dropping it
+                // turned a one-line diagnosis into a round trip.
+                let mut err_desc = String::new();
                 for pair in query.split('&') {
                     let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
                     let v = v.replace('+', " ");
@@ -504,6 +507,7 @@ pub fn await_code(
                         "code" => code = v,
                         "state" => state = v,
                         "error" => err = v,
+                        "error_description" => err_desc = v,
                         _ => {}
                     }
                 }
@@ -526,7 +530,11 @@ pub fn await_code(
                 let _ = stream.flush();
 
                 if !err.is_empty() {
-                    return Err(format!("the identity provider refused: {err}"));
+                    return Err(if err_desc.is_empty() {
+                        format!("the identity provider refused: {err}")
+                    } else {
+                        format!("the identity provider refused: {err} — {err_desc}")
+                    });
                 }
                 if code.is_empty() {
                     return Err("the browser came back without an authorization code".into());
