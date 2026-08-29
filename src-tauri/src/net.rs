@@ -48,6 +48,14 @@ pub fn remember(proxy: &str) {
     }
 }
 
+/// Drop the remembered proxy. Used by the reset, where "delete everything"
+/// has to mean everything, including what the app inferred about the network.
+pub fn forget() {
+    if let Ok(mut g) = last_good_slot().lock() {
+        g.clear();
+    }
+}
+
 pub fn last_good() -> String {
     last_good_slot().lock().map(|g| g.clone()).unwrap_or_default()
 }

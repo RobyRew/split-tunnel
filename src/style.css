@@ -224,6 +224,27 @@ details.app[open] > summary::after{content:"▾"}
 }
 .appdetail .hint{margin-top:5px}
 
+
+/* ── Mica / transparency ────────────────────────────────────────────────
+   The window is created transparent with a Mica backdrop. These rules decide
+   whether the page lets that backdrop through. With transparency off the
+   surfaces are fully opaque, which is also the correct fallback on Windows 10,
+   where Mica does not exist and a see-through body would show the desktop. */
+[data-mica="on"] body{background:transparent}
+[data-mica="on"] .card{background:color-mix(in srgb, var(--card) 84%, transparent)}
+[data-mica="on"] .card.muted{background:transparent}
+[data-mica="on"] .menu{background:color-mix(in srgb, var(--card) 92%, transparent)}
+[data-mica="on"] footer{background:color-mix(in srgb, var(--bg) 70%, transparent)}
+[data-mica="on"] input,
+[data-mica="on"] select,
+[data-mica="on"] .logbox,
+[data-mica="on"] .appdetail{background:color-mix(in srgb, var(--field) 86%, transparent)}
+
 /* Utility LAST and important: a component rule declared later once beat it,
    and the update banner became permanently visible. */
 .hidden{display:none !important}
+
+/* Destructive action. Muted until armed — a red button that is always red
+   stops reading as a warning. */
+button.danger{color:var(--bad);border-color:var(--bad-line)}
+button.danger:hover{background:var(--bad-bg);border-color:var(--bad)}

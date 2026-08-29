@@ -140,6 +140,7 @@ function readForm() {
     update_check_hours: parseInt($("updhours").value, 10) || 0,
     theme: $("theme").value,
     accent: $("accent").value,
+    transparency: $("mica").checked,
     oidc: cfg.oidc || {},
   };
 }
@@ -202,6 +203,10 @@ async function applyAccent(choice) {
 // ── Theme ─────────────────────────────────────────────────────────────────
 // "system" leaves it to prefers-color-scheme, which the webview inherits from
 // the Windows app theme.
+function applyMica(on) {
+  document.documentElement.setAttribute("data-mica", on ? "on" : "off");
+}
+
 function applyTheme(t) {
   document.documentElement.setAttribute("data-theme", t === "system" ? "" : t);
 }
@@ -421,6 +426,7 @@ function wireEvents() {
   $("updhours").addEventListener("change", save);
   $("theme").addEventListener("change", () => { applyTheme($("theme").value); save(); });
   $("accent").addEventListener("change", () => { applyAccent($("accent").value); save(); });
+  $("mica").addEventListener("change", () => { applyMica($("mica").checked); save(); });
 
   const closeMenu = () => $("settings").classList.add("hidden");
   $("gear").addEventListener("click", (e) => {
@@ -529,6 +535,44 @@ function wireEvents() {
     refresh();
   });
 
+  // Two-step on purpose. This throws away a certificate and a sign-in, and a
+  // single mis-click in a small menu is far too cheap for that.
+  let resetArmed = false;
+  let resetTimer = null;
+  $("reset").addEventListener("click", async (e) => {
+    const b = e.currentTarget;
+    if (!resetArmed) {
+      resetArmed = true;
+      b.textContent = "Tap again to confirm";
+      b.classList.add("failed");
+      clearTimeout(resetTimer);
+      resetTimer = setTimeout(() => {
+        resetArmed = false;
+        b.textContent = "Reset everything";
+        b.classList.remove("failed");
+      }, 5000);
+      return;
+    }
+    clearTimeout(resetTimer);
+    resetArmed = false;
+    b.classList.remove("failed");
+    b.dataset.label = "Reset everything";
+    try {
+      await withBusy(b, "Resetting…", () => invoke("reset_all"));
+      LOG.length = 0;
+      updateDismissed = false;
+      lastAuth = null;
+      $("settings").classList.add("hidden");
+      clearBanner();
+      await loadState();
+      await refresh();
+      setDot("idle", "Waiting for an address…");
+      say("Everything was deleted. The app is back to a fresh install.", "ok");
+    } catch (err) {
+      fail(String(err));
+    }
+  });
+
   $("signout").addEventListener("click", async (e) => {
     await withBusy(e.currentTarget, "Signing out…", () => invoke("sign_out")).catch(() => {});
     say("Signed out. Your key and certificate were deleted.");
@@ -614,9 +658,11 @@ async function loadState() {
   $("updhours").value = String(cfg.update_check_hours ?? 24);
   $("theme").value = cfg.theme || "system";
   $("accent").value = cfg.accent || "windows";
+  $("mica").checked = cfg.transparency !== false;
   $("lporth").textContent = cfg.local_port || 1080;
   applyTheme($("theme").value);
   await applyAccent($("accent").value);
+  applyMica($("mica").checked);
 
   $("autostart").checked = await invoke("autostart_enabled").catch(() => false);
 

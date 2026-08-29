@@ -54,6 +54,10 @@ pub struct Config {
     pub theme: String,
     /// "windows" to follow the Windows accent colour, or a "#rrggbb" literal.
     pub accent: String,
+    /// Let the Windows Mica backdrop show through the surfaces. The window is
+    /// always created transparent; this only decides whether the page is
+    /// translucent over it.
+    pub transparency: bool,
     /// Local port the relay listens on for ssh to dial.
     pub relay_port: u16,
 }
@@ -77,6 +81,7 @@ impl Default for Config {
             update_check_hours: 24,
             theme: "system".into(),
             accent: "windows".into(),
+            transparency: true,
             relay_port: 12223,
         }
     }

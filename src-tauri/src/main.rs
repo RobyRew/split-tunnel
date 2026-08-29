@@ -168,6 +168,39 @@ fn system_accent() -> Option<String> {
     net::windows_accent()
 }
 
+/// Delete everything this app has created and return it to a first run.
+///
+/// Deliberately thorough: the certificate and key, the tokens, the enrollment
+/// record, the pinned host key, the saved settings, the start-up entry, the
+/// remembered proxy, and Spotify's proxy setting if we were the ones who
+/// changed it. Anything left behind would make "reset" a lie and would be
+/// invisible to the user, since all of it lives outside the app's window.
+///
+/// NOT deleted: Spotify's own prefs backup, which is the user's safety net and
+/// not ours to remove.
+#[tauri::command(async)]
+fn reset_all(app: State<App>) -> Result<(), String> {
+    let cfg = app.cfg.lock().unwrap().clone();
+
+    // Stop first: the supervisor would otherwise keep using a key that is
+    // about to disappear, and keep the relay's local port bound.
+    app.sup.stop();
+
+    if cfg.manage_spotify {
+        let _ = spotify::restore();
+    }
+    let _ = autostart::disable();
+
+    Tokens::forget(&app.dir);
+    enroll::clear(&app.dir);
+    let _ = std::fs::remove_file(Config::path(&app.dir));
+    net::forget();
+
+    *app.cfg.lock().unwrap() = Config::default();
+    *app.auth.lock().unwrap() = AuthState::SignedOut;
+    Ok(())
+}
+
 #[tauri::command]
 fn get_config(app: State<App>) -> Config {
     app.cfg.lock().unwrap().clone()
@@ -831,6 +864,7 @@ fn main() {
             spotify_restore,
             connected_apps,
             system_accent,
+            reset_all,
             sign_in,
             cancel_sign_in,
             sign_out,
