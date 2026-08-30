@@ -8,7 +8,7 @@ use std::process::Command;
 
 const TASK: &str = "SplitStream";
 
-// The app was called SplitTunnel until 0.9.0. Its start-up entry points at an
+// The app was called SplitTunnel until 1.0.0. Its start-up entry points at an
 // executable the rename removed, so leaving it behind means Windows tries to
 // launch a missing program at every logon. Cleared whenever start-up is
 // touched, which is the only moment we can be sure the user is not mid-boot.

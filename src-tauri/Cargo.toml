@@ -1,6 +1,6 @@
 [package]
 name = "split-stream"
-version = "0.9.0"
+version = "1.0.0"
 description = "Split one Windows application's traffic off through your own server"
 authors = ["RobyRew"]
 edition = "2021"
