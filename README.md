@@ -1,12 +1,12 @@
 <div align="center">
-  <img src="assets/logo.png" width="104" alt="SplitTunnel" />
-  <h1>SplitTunnel</h1>
+  <img src="assets/logo.png" width="104" alt="SplitStream" />
+  <h1>SplitStream</h1>
   <p><b>Route one Windows application through your own server. Leave everything else alone.</b></p>
 </div>
 
 ---
 
-SplitTunnel opens a SOCKS5 proxy on `127.0.0.1` that is carried over SSH to a
+SplitStream opens a SOCKS5 proxy on `127.0.0.1` that is carried over SSH to a
 server you control. You point a single application at that proxy — Spotify, a
 browser profile, a game launcher — and **only that application's traffic** takes
 the detour. The rest of the machine keeps using its normal connection.
@@ -41,7 +41,7 @@ key-only authentication on a port you already run and already harden. On a
 | Keys | An SSH keypair. PuTTY `.ppk` format, or a key already loaded in Pageant |
 
 PuTTY does **not** need to be installed — `plink.exe` and `pageant.exe` are
-bundled. If you already run Pageant for other tunnels, SplitTunnel reuses it
+bundled. If you already run Pageant for other tunnels, SplitStream reuses it
 rather than starting a second agent.
 
 ---
@@ -51,8 +51,8 @@ rather than starting a second agent.
 Full instructions, compose file and hardening scripts: **[`server/README.md`](server/README.md)**.
 
 ```bash
-git clone https://github.com/RobyRew/split-tunnel
-cd split-tunnel/server
+git clone https://github.com/RobyRew/split-stream
+cd split-stream/server
 cp /path/to/alice.pub pubkeys/alice.pub   # one .pub per person
 docker compose up -d
 sudo ufw allow 2223/tcp
@@ -141,7 +141,7 @@ auto-start**, and consider adding your IP to `ignoreip`.
 
 ## 2. Install the app
 
-Download `SplitTunnel_x.y.z_x64-setup.exe` from [Releases](../../releases) and
+Download `SplitStream_x.y.z_x64-setup.exe` from [Releases](../../releases) and
 run it. There are two ways to get access, and the app supports both.
 
 ### With a sign-in (if your server runs the enrollment service)
@@ -180,7 +180,7 @@ Spotify → **Settings** → **Proxy settings**:
 **Fully quit Spotify and reopen it** — including the tray icon
 (`taskkill /IM Spotify.exe /F`). Proxy settings are read only at startup.
 
-SplitTunnel can write these settings for you (*Options → Manage Spotify's proxy
+SplitStream can write these settings for you (*Options → Manage Spotify's proxy
 setting*). It is **off by default and experimental**: it edits Spotify's `prefs`
 file, so it backs the file up first and restores it on disconnect.
 
@@ -218,7 +218,7 @@ Pageant was detected.
 ## Security notes
 
 - Nothing is baked into the binary. No server address ships with the app; the
-  config lives in `%APPDATA%\com.robyrew.splittunnel\config.json`.
+  config lives in `%APPDATA%\com.robyrew.splitstream\config.json`.
 - Private keys are never read or stored by the app — `plink` and Pageant handle
   them.
 - `plink.exe` / `pageant.exe` are downloaded **in CI** from the official PuTTY

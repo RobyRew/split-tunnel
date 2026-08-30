@@ -1,15 +1,15 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "SplitTunnel",
-  "version": "0.8.0",
-  "identifier": "com.robyrew.splittunnel",
+  "productName": "SplitStream",
+  "version": "0.9.0",
+  "identifier": "com.robyrew.splitstream",
   "build": {
     "frontendDist": "../src"
   },
   "app": {
     "windows": [
       {
-        "title": "SplitTunnel",
+        "title": "SplitStream",
         "width": 480,
         "height": 680,
         "resizable": false,
@@ -43,8 +43,8 @@
     "resources": [
       "bin/*"
     ],
-    "shortDescription": "Split-tunnel one app through your VPS",
-    "longDescription": "Routes a single desktop application through your own server over SOCKS5, leaving all other traffic on the default interface.",
+    "shortDescription": "Send one app through your own server",
+    "longDescription": "Splits off a single application's traffic and sends it through your own server, leaving everything else on the default connection.",
     "windows": {
       "nsis": {
         "installMode": "currentUser",
@@ -59,7 +59,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFBRDM5MzBFNjVBNjU5NzgKUldSNFdhWmxEcFBUcWxYV01wOUJkWmtpdjNiMHJndnYrRFpPMFV0dHI3eHlxc0JyaElpTHJFQXAK",
       "endpoints": [
-        "https://github.com/RobyRew/split-tunnel/releases/latest/download/latest.json"
+        "https://github.com/RobyRew/split-stream/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

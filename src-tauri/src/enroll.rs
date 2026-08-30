@@ -4,7 +4,7 @@
 //! public half is sent, and what comes back is a certificate that expires on
 //! its own — so a stolen copy is worth hours, not forever.
 //!
-//! Files written next to the config (`%APPDATA%\..\SplitTunnel\`):
+//! Files written next to the config (`%APPDATA%\..\SplitStream\`):
 //!   id_ed25519           private key      (never transmitted)
 //!   id_ed25519.pub       public key
 //!   id_ed25519-cert.pub  the certificate  — OpenSSH finds this by NAME,
@@ -70,7 +70,7 @@ pub fn known_hosts_path(dir: &Path) -> PathBuf {
 
 /// The name the server's host key is pinned under. Constant so that the entry
 /// matches whether we connect directly or through the relay.
-pub const HOST_ALIAS: &str = "splittunnel-server";
+pub const HOST_ALIAS: &str = "splitstream-server";
 
 fn now() -> u64 {
     SystemTime::now()

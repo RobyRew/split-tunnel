@@ -137,7 +137,7 @@ pub fn apply(local_port: u16) -> Result<SpotifyState, String> {
             p.display()
         ));
     }
-    let backup = p.with_extension("splittunnel.bak");
+    let backup = p.with_extension("splitstream.bak");
     if !backup.exists() {
         std::fs::copy(&p, &backup).map_err(|e| e.to_string())?;
     }

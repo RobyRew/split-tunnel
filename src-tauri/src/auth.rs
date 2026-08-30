@@ -534,9 +534,9 @@ pub fn await_code(
 
                 let ok = err.is_empty() && !code.is_empty() && state == expect_state;
                 let body = if ok {
-                    "<h2>Signed in</h2><p>You can close this tab and return to SplitTunnel.</p>"
+                    "<h2>Signed in</h2><p>You can close this tab and return to SplitStream.</p>"
                 } else {
-                    "<h2>Sign-in failed</h2><p>Return to SplitTunnel for the reason.</p>"
+                    "<h2>Sign-in failed</h2><p>Return to SplitStream for the reason.</p>"
                 };
                 let _ = stream.write_all(
                     format!(

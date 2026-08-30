@@ -6,7 +6,13 @@
 use std::path::Path;
 use std::process::Command;
 
-const TASK: &str = "SplitTunnel";
+const TASK: &str = "SplitStream";
+
+// The app was called SplitTunnel until 0.9.0. Its start-up entry points at an
+// executable the rename removed, so leaving it behind means Windows tries to
+// launch a missing program at every logon. Cleared whenever start-up is
+// touched, which is the only moment we can be sure the user is not mid-boot.
+const LEGACY_TASK: &str = "SplitTunnel";
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -20,7 +26,23 @@ fn quiet(cmd: &mut Command) -> &mut Command {
     cmd
 }
 
+/// Remove the pre-rename start-up entry, wherever it ended up. Neither of
+/// these existing is the normal case, so failures are ignored.
+fn purge_legacy() {
+    let _ = quiet(&mut Command::new("schtasks"))
+        .args(["/Delete", "/F", "/TN", LEGACY_TASK])
+        .output();
+    let _ = quiet(&mut Command::new("reg"))
+        .args([
+            "delete",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+            "/v", LEGACY_TASK, "/f",
+        ])
+        .output();
+}
+
 pub fn enable(exe: &Path) -> Result<(), String> {
+    purge_legacy();
     let out = quiet(&mut Command::new("schtasks"))
         .args([
             "/Create", "/F",
@@ -56,7 +78,7 @@ pub fn enable(exe: &Path) -> Result<(), String> {
         }
         return Err(
             "This PC does not allow adding start-up items (both the Task \
-             Scheduler and the Run key were refused). Start SplitTunnel \
+             Scheduler and the Run key were refused). Start SplitStream \
              manually, or ask IT."
                 .into(),
         );
@@ -65,6 +87,7 @@ pub fn enable(exe: &Path) -> Result<(), String> {
 }
 
 pub fn disable() -> Result<(), String> {
+    purge_legacy();
     // Remove both possible homes; neither existing is not an error.
     let _ = quiet(&mut Command::new("schtasks"))
         .args(["/Delete", "/F", "/TN", TASK])

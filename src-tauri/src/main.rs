@@ -803,12 +803,12 @@ fn main() {
 
             // A tunnel is a background job: closing the window must not kill it.
             // The tray is how you get back to it.
-            let show = MenuItem::with_id(app, "show", "Open SplitTunnel", true, None::<&str>)?;
+            let show = MenuItem::with_id(app, "show", "Open SplitStream", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
             let mut tray = TrayIconBuilder::new()
                 .menu(&menu)
-                .tooltip("SplitTunnel")
+                .tooltip("SplitStream")
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
                         if let Some(w) = app.get_webview_window("main") {
@@ -873,5 +873,5 @@ fn main() {
             renew
         ])
         .run(tauri::generate_context!())
-        .expect("failed to start SplitTunnel");
+        .expect("failed to start SplitStream");
 }

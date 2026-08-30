@@ -7,15 +7,19 @@
 ; Closing our own processes first makes the upgrade uneventful.
 
 !macro NSIS_HOOK_PREINSTALL
-  DetailPrint "Closing SplitTunnel if it is running..."
+  DetailPrint "Closing SplitStream if it is running..."
+  nsExec::Exec 'taskkill /F /T /IM SplitStream.exe'
+  ; Pre-0.9.0 name. A machine upgrading from SplitTunnel still has that process
+  ; and its wstunnel child holding files open, and the old install is a separate
+  ; product to Windows, so nothing else closes it for us.
   nsExec::Exec 'taskkill /F /T /IM SplitTunnel.exe'
   nsExec::Exec 'taskkill /F /IM wstunnel.exe'
   Sleep 700
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  DetailPrint "Closing SplitTunnel..."
-  nsExec::Exec 'taskkill /F /T /IM SplitTunnel.exe'
+  DetailPrint "Closing SplitStream..."
+  nsExec::Exec 'taskkill /F /T /IM SplitStream.exe'
   nsExec::Exec 'taskkill /F /IM wstunnel.exe'
   Sleep 700
 !macroend

@@ -105,7 +105,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: SplitTunnel-installer
+          name: SplitStream-installer
           path: dist/*.exe
 
       # The updater feed. The app fetches this, compares versions, downloads the

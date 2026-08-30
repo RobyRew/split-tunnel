@@ -1,7 +1,7 @@
 [package]
-name = "split-tunnel"
-version = "0.8.0"
-description = "Route a single Windows application through your own VPS over SOCKS5"
+name = "split-stream"
+version = "0.9.0"
+description = "Split one Windows application's traffic off through your own server"
 authors = ["RobyRew"]
 edition = "2021"
 rust-version = "1.77"
